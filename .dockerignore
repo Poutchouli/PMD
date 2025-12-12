@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*.db
+.venv/
+.git/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+**/__pycache__/

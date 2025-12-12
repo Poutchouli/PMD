@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  db:
+    image: timescale/timescaledb:2.13.0-pg15
+    environment:
+      POSTGRES_DB: pingmedaddy
+      POSTGRES_USER: pingmedaddy
+      POSTGRES_PASSWORD: pingmedaddy
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./scripts/timescale_init.sql:/docker-entrypoint-initdb.d/timescale_init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "pingmedaddy"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pingmedaddy:pingmedaddy@db:5432/pingmedaddy
+    ports:
+      - "6666:6666"
+    restart: unless-stopped
+
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - app
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+volumes:
+  db-data:
