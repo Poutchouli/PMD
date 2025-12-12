@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     )
     ping_timeout: float = 1.0
     ping_concurrency_limit: int = 200
+    admin_username: str = Field(default="admin")
+    admin_password: str = Field(default="changeme")
+    auth_secret: str = Field(default="super-secret-key")
+    auth_token_minutes: int = Field(default=1440)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -11,11 +11,29 @@ Use this guide to integrate the PingMeDaddy monitoring API into any other applic
    - App endpoint: `http://localhost:6666`
    - Database: `postgresql+asyncpg://pingmedaddy:pingmedaddy@db:5432/pingmedaddy`
 2. **Health check**: there is no `/health` endpoint; hitting `/docs` will confirm the API is ready.
-3. **Authentication**: none. Restrict network access at the infrastructure level if needed.
+3. **Authentication**: required. Call `POST /auth/login` with the admin credentials (defaults: `admin` / `changeme`) to obtain a bearer token, then pass `Authorization: Bearer <token>` on every request.
 
 > The CLI mirrors these endpoints. For example, `python -m app.cli target add 1.1.1.1 --frequency 5` is equivalent to the POST `/targets/` call described below.
 
 ## Endpoints
+
+### 0. Login
+- **POST** `/auth/login`
+- **Body** (`application/json`):
+  ```json
+  {
+    "username": "admin",
+    "password": "changeme"
+  }
+  ```
+- **Response** (`200 OK`):
+  ```json
+  {
+    "access_token": "<jwt>",
+    "token_type": "bearer"
+  }
+  ```
+- Use the returned token in the `Authorization` header for all subsequent endpoints. Tokens expire after the duration configured by `AUTH_TOKEN_MINUTES` (default: 24h).
 
 ### 1. Create a Target
 - **POST** `/targets/`

@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   ChevronRight,
+  Lock,
+  LogOut,
   Globe,
   Pause,
   Play,
@@ -11,6 +13,7 @@ import {
   RefreshCw,
   Server,
   Trash2,
+  User,
   X,
 } from 'lucide-react'
 
@@ -35,11 +38,69 @@ function App() {
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
+  const [token, setToken] = useState(() => {
+    if (typeof window === 'undefined') return null
+    return window.localStorage.getItem('pmd_token')
+  })
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [loginError, setLoginError] = useState('')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const isAuthenticated = Boolean(token)
 
   const currentTarget = useMemo(
     () => targets.find((target) => target.id === selectedId) ?? null,
     [targets, selectedId],
   )
+
+  const logout = useCallback(
+    (message) => {
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem('pmd_token')
+      }
+      setToken(null)
+      setView('dashboard')
+      setSelectedId(null)
+      setTargets([])
+      setLogs([])
+      if (message) {
+        setError(message)
+      }
+    },
+    [],
+  )
+
+  const handleLoginSubmit = async (event) => {
+    event.preventDefault()
+    if (isLoggingIn) return
+    setIsLoggingIn(true)
+    setLoginError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: loginForm.username.trim(),
+          password: loginForm.password,
+        }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || !payload?.access_token) {
+        throw new Error(payload?.detail ?? 'Identifiants invalides')
+      }
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('pmd_token', payload.access_token)
+      }
+      setToken(payload.access_token)
+      setLoginForm({ username: '', password: '' })
+      setLoginError('')
+      setError('')
+    } catch (err) {
+      setLoginError(err.message ?? 'Impossible de se connecter')
+    } finally {
+      setIsLoggingIn(false)
+      setLoginForm((prev) => ({ ...prev, password: '' }))
+    }
+  }
 
   const stats = useMemo(() => {
     if (!logs.length) return initialStats
@@ -64,8 +125,20 @@ function App() {
   }, [logs])
 
   const apiCall = useCallback(async (endpoint, options = {}) => {
+    if (!token) {
+      throw new Error('Non authentifié')
+    }
     try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, options)
+      const headers = new Headers(options.headers ?? {})
+      headers.set('Authorization', `Bearer ${token}`)
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers,
+      })
+      if (response.status === 401) {
+        logout('Session expirée, merci de vous reconnecter.')
+        throw new Error('Session expirée')
+      }
       if (!response.ok) {
         let detail
         try {
@@ -81,12 +154,15 @@ function App() {
       return await response.json()
     } catch (err) {
       console.error('API Error:', err)
-      setError("L'API est inaccessible. Vérifiez Docker ou la configuration réseau.")
+      if (!String(err.message).includes('Session expirée')) {
+        setError("L'API est inaccessible. Vérifiez Docker ou la configuration réseau.")
+      }
       throw err
     }
-  }, [])
+  }, [logout, token])
 
   const loadTargets = useCallback(async () => {
+    if (!token) return
     try {
       const result = await apiCall('/targets/')
       result.sort((a, b) => a.id - b.id)
@@ -99,37 +175,41 @@ function App() {
     } catch (err) {
       // handled in apiCall
     }
-  }, [apiCall, selectedId])
+  }, [apiCall, selectedId, token])
 
   const loadAnalysis = useCallback(async (id) => {
-    if (!id) return
+    if (!id || !token) return
     try {
       const result = await apiCall(`/targets/${id}/logs?limit=${LOG_LIMIT}`)
       setLogs(result)
     } catch (err) {
       // handled upstream
     }
-  }, [apiCall])
+  }, [apiCall, token])
 
   const handleRefresh = useCallback(async () => {
+    if (!token) return
     if (view === 'details' && selectedId) {
       await loadAnalysis(selectedId)
     } else {
       await loadTargets()
     }
-  }, [loadAnalysis, loadTargets, selectedId, view])
+  }, [loadAnalysis, loadTargets, selectedId, token, view])
 
   useEffect(() => {
+    if (!token) return
     loadTargets()
-  }, [loadTargets])
+  }, [loadTargets, token])
 
   useEffect(() => {
+    if (!token) return
     if (view === 'details' && selectedId) {
       loadAnalysis(selectedId)
     }
-  }, [view, selectedId, loadAnalysis])
+  }, [view, selectedId, loadAnalysis, token])
 
   useEffect(() => {
+    if (!token) return undefined
     const interval = setInterval(() => {
       if (view === 'details' && selectedId) {
         loadAnalysis(selectedId)
@@ -138,7 +218,7 @@ function App() {
       }
     }, POLL_INTERVAL)
     return () => clearInterval(interval)
-  }, [view, selectedId, loadAnalysis, loadTargets])
+  }, [token, view, selectedId, loadAnalysis, loadTargets])
 
   const handleCreateSubmit = async (event) => {
     event.preventDefault()
@@ -200,6 +280,18 @@ function App() {
 
   const reversedLogs = useMemo(() => [...logs].reverse(), [logs])
 
+  if (!isAuthenticated) {
+    return (
+      <LoginScreen
+        form={loginForm}
+        onChange={setLoginForm}
+        onSubmit={handleLoginSubmit}
+        error={loginError}
+        isLoading={isLoggingIn}
+      />
+    )
+  }
+
   return (
     <div className="bg-slate-50 text-slate-800 font-display min-h-screen flex flex-col">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
@@ -221,14 +313,24 @@ function App() {
               </p>
             </div>
           </button>
-          <button
-            type="button"
-            onClick={handleRefresh}
-            className="p-2 text-slate-400 hover:text-slate-600 transition-colors rounded-full hover:bg-slate-100"
-            title="Actualiser les données"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRefresh}
+              className="p-2 text-slate-400 hover:text-slate-600 transition-colors rounded-full hover:bg-slate-100"
+              title="Actualiser les données"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Déconnexion</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -643,6 +745,69 @@ function LatencyChart({ logs }) {
   }, [drawChart])
 
   return <canvas ref={canvasRef} className="w-full h-full" />
+}
+
+function LoginScreen({ form, onChange, onSubmit, error, isLoading }) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-white/10 border border-slate-800 rounded-2xl p-8 shadow-2xl backdrop-blur">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="bg-slate-900 text-white p-2 rounded-xl">
+            <Activity className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-lg font-semibold text-white">PingMeDaddy</p>
+            <p className="text-sm text-slate-300">Déverrouillez le tableau de bord</p>
+          </div>
+        </div>
+        {error && (
+          <div className="mb-4 text-sm text-red-300 bg-red-500/10 border border-red-400 rounded-md px-3 py-2">
+            {error}
+          </div>
+        )}
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <div>
+            <label className="text-sm font-medium text-slate-200">Identifiant</label>
+            <div className="relative mt-1">
+              <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                className="w-full bg-slate-900/60 border border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-slate-400 focus:border-transparent placeholder:text-slate-500"
+                placeholder="admin"
+                value={form.username}
+                onChange={(event) => onChange((prev) => ({ ...prev, username: event.target.value }))}
+                autoComplete="username"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-slate-200">Mot de passe</label>
+            <div className="relative mt-1">
+              <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="password"
+                className="w-full bg-slate-900/60 border border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-slate-400 focus:border-transparent placeholder:text-slate-500"
+                placeholder="••••••••"
+                value={form.password}
+                onChange={(event) => onChange((prev) => ({ ...prev, password: event.target.value }))}
+                autoComplete="current-password"
+              />
+            </div>
+          </div>
+          <button
+            type="submit"
+            disabled={isLoading || !form.username || !form.password}
+            className="w-full flex items-center justify-center gap-2 bg-slate-100 text-slate-900 font-semibold py-2.5 rounded-lg hover:bg-white transition disabled:opacity-60"
+          >
+            {isLoading ? 'Connexion…' : 'Déverrouiller'}
+          </button>
+          <p className="text-xs text-slate-400 text-center">
+            Identifiants configurables via les variables d'environnement `ADMIN_USERNAME` et `ADMIN_PASSWORD`.
+          </p>
+        </form>
+      </div>
+    </div>
+  )
 }
 
 export default App

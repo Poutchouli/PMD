@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.config import get_settings
 from app.db import engine
 from app.models import Base
+from app.api.routes.auth import router as auth_router
 from app.api.routes.targets import router as targets_router
 from app.services.scheduler import scheduler
 
@@ -28,5 +29,6 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+    app.include_router(auth_router)
     app.include_router(targets_router)
     return app

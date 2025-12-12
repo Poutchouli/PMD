@@ -5,7 +5,12 @@ import httpx
 
 # Ensure test DB before imports
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_pingmedaddy.db"
+os.environ["ADMIN_USERNAME"] = "tester"
+os.environ["ADMIN_PASSWORD"] = "secret"
+os.environ["AUTH_SECRET"] = "test-secret"
 
+from app.config import get_settings  # noqa: E402
+get_settings.cache_clear()
 from app import create_app  # noqa: E402
 from app.services import pinger  # noqa: E402
 from app.services import scheduler as scheduler_service  # noqa: E402
@@ -30,28 +35,40 @@ async def test_create_pause_resume_flow(monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post("/targets/", json={"ip": "192.168.1.254", "frequency": 1})
+        login_resp = await client.post(
+            "/auth/login",
+            json={"username": "tester", "password": "secret"},
+        )
+        assert login_resp.status_code == 200
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = await client.post(
+            "/targets/", json={"ip": "192.168.1.254", "frequency": 1}, headers=headers
+        )
         assert resp.status_code == 200
         target_id = resp.json()["id"]
 
         await asyncio.sleep(1.1)
 
-        resp = await client.post(f"/targets/{target_id}/pause")
+        resp = await client.post(f"/targets/{target_id}/pause", headers=headers)
         assert resp.status_code == 200
 
-        resp = await client.post(f"/targets/{target_id}/resume")
+        resp = await client.post(f"/targets/{target_id}/resume", headers=headers)
         assert resp.status_code == 200
 
-        resp = await client.get(f"/targets/{target_id}/logs", params={"limit": 10})
+        resp = await client.get(
+            f"/targets/{target_id}/logs", params={"limit": 10}, headers=headers
+        )
         assert resp.status_code == 200
         logs = resp.json()
         assert len(logs) >= 1
         assert logs[-1]["latency_ms"] == 10.0
 
-        resp = await client.get(f"/targets/{target_id}/events")
+        resp = await client.get(f"/targets/{target_id}/events", headers=headers)
         assert resp.status_code == 200
         events = resp.json()
         assert any(e["event_type"] == "start" for e in events)
 
-        resp = await client.delete(f"/targets/{target_id}")
+        resp = await client.delete(f"/targets/{target_id}", headers=headers)
         assert resp.status_code == 200

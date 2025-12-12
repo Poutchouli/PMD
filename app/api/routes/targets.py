@@ -7,8 +7,9 @@ from app.db import get_db
 from app.models import MonitorTarget, PingLog, EventLog
 from app.schemas import TargetCreate, TargetOut, TargetStatus, PingLogOut, EventLogOut
 from app.services.scheduler import scheduler
+from app.security import require_auth
 
-router = APIRouter(prefix="/targets", tags=["targets"])
+router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(require_auth)])
 
 
 @router.post("/", response_model=TargetStatus)
