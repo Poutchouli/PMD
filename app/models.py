@@ -14,15 +14,27 @@ class MonitorTarget(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    logs = relationship("PingLog", back_populates="target", lazy="selectin")
-    events = relationship("EventLog", back_populates="target", lazy="selectin")
+    logs = relationship(
+        "PingLog",
+        back_populates="target",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    events = relationship(
+        "EventLog",
+        back_populates="target",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class PingLog(Base):
     __tablename__ = "ping_logs"
 
     time = Column(DateTime(timezone=True), primary_key=True, index=True)
-    target_id = Column(Integer, ForeignKey("monitor_targets.id"), primary_key=True)
+    target_id = Column(Integer, ForeignKey("monitor_targets.id", ondelete="CASCADE"), primary_key=True)
     latency_ms = Column(Float, nullable=True)  # Null if packet loss
     hops = Column(Integer, nullable=True)
     packet_loss = Column(Boolean, default=False)
@@ -34,7 +46,7 @@ class EventLog(Base):
     __tablename__ = "event_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    target_id = Column(Integer, ForeignKey("monitor_targets.id"), nullable=True)
+    target_id = Column(Integer, ForeignKey("monitor_targets.id", ondelete="CASCADE"), nullable=True)
     event_type = Column(String, nullable=False)
     message = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

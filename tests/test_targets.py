@@ -111,3 +111,8 @@ async def test_create_pause_resume_flow(monkeypatch):
 
         resp = await client.delete(f"/targets/{target_id}", headers=headers)
         assert resp.status_code == 200
+
+        resp = await client.get("/targets/", headers=headers)
+        assert resp.status_code == 200
+        targets = resp.json()
+        assert all(t["id"] != target_id for t in targets)

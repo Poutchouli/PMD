@@ -75,14 +75,14 @@ async def resume_target(target_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{target_id}", response_model=TargetStatus)
-async def stop_target(target_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_target(target_id: int, db: AsyncSession = Depends(get_db)):
     target = await db.get(MonitorTarget, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
-    target.is_active = False
+    await scheduler.stop_for_target(target_id, "Tracking stopped and target deleted")
+    await db.delete(target)
     await db.commit()
-    await scheduler.stop_for_target(target_id)
-    return TargetStatus(message="Tracking stopped", id=target_id)
+    return TargetStatus(message="Target deleted", id=target_id)
 
 
 @router.get("/{target_id}/logs", response_model=List[PingLogOut])
