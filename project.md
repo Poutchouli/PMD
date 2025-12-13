@@ -70,6 +70,8 @@ Run everything with Docker:
 docker compose up --build
 ```
 
+Traceroute support requires a binary inside the container/host. The backend image now installs `traceroute` by default; if your deployment stores the executable elsewhere, set the `TRACEROUTE_BINARY` environment variable (for example `/usr/sbin/traceroute` or `C:\\Windows\\System32\\tracert.exe`).
+
 What it does:
 - `db`: TimescaleDB (Postgres) seeded with `scripts/timescale_init.sql` to enable hypertables and continuous aggregates.
 - `app`: FastAPI on `http://localhost:6666`, using `DATABASE_URL=postgresql+asyncpg://pingmedaddy:pingmedaddy@db:5432/pingmedaddy`.

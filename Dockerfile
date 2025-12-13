@@ -8,7 +8,7 @@ WORKDIR /app
 
 # Install ping binary
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iputils-ping \
+    && apt-get install -y --no-install-recommends iputils-ping traceroute \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY main.py ./
 
-ENV DATABASE_URL=postgresql+asyncpg://pingmedaddy:pingmedaddy@db:5432/pingmedaddy
+ENV APP_PORT=6666
 EXPOSE 6666
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "6666"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${APP_PORT:-6666}"]

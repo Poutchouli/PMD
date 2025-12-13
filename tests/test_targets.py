@@ -1,22 +1,24 @@
 import os
 import asyncio
-import pytest
-import httpx
+from datetime import datetime, timezone
 
-# Ensure test DB before imports
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_pingmedaddy.db"
 os.environ["ADMIN_USERNAME"] = "tester"
 os.environ["ADMIN_PASSWORD"] = "secret"
 os.environ["AUTH_SECRET"] = "test-secret"
+os.environ["CORS_ORIGINS"] = "http://test"
+
+import pytest
+import httpx
 
 from app.config import get_settings  # noqa: E402
 get_settings.cache_clear()
 from app import create_app  # noqa: E402
 from app.services import pinger  # noqa: E402
 from app.services import scheduler as scheduler_service  # noqa: E402
+from app.services import traceroute as traceroute_service  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.models import Base  # noqa: E402
-
 
 @pytest.mark.asyncio
 async def test_create_pause_resume_flow(monkeypatch):
@@ -25,6 +27,27 @@ async def test_create_pause_resume_flow(monkeypatch):
 
     monkeypatch.setattr(pinger, "ping_target", fake_ping)
     monkeypatch.setattr(scheduler_service, "ping_target", fake_ping)
+
+    async def fake_traceroute(ip: str, **_kwargs):
+        now = datetime.now(timezone.utc)
+        return {
+            "ip": ip,
+            "started_at": now,
+            "finished_at": now,
+            "duration_ms": 1.0,
+            "hops": [
+                {
+                    "hop": 1,
+                    "host": "router",
+                    "ip": "192.168.0.1",
+                    "rtt_ms": 1.0,
+                    "is_timeout": False,
+                    "raw": "1 router (192.168.0.1) 1.0 ms",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(traceroute_service, "run_traceroute", fake_traceroute)
     await scheduler_service.scheduler.shutdown()
 
     app = create_app()
@@ -69,6 +92,22 @@ async def test_create_pause_resume_flow(monkeypatch):
         assert resp.status_code == 200
         events = resp.json()
         assert any(e["event_type"] == "start" for e in events)
+
+        resp = await client.get(
+            f"/targets/{target_id}/insights",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        insights = resp.json()
+        assert insights["target_id"] == target_id
+
+        resp = await client.post(
+            f"/targets/{target_id}/traceroute",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        trace = resp.json()
+        assert trace["hops"][0]["hop"] == 1
 
         resp = await client.delete(f"/targets/{target_id}", headers=headers)
         assert resp.status_code == 200

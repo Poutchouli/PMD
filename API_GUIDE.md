@@ -4,14 +4,15 @@ Use this guide to integrate the PingMeDaddy monitoring API into any other applic
 
 ## Getting Started
 
-1. **Run the stack** (FastAPI + TimescaleDB) locally:
+1. **Configure environment variables** by copying `.env.example` to `.env` and tweaking the values you need (database URL, login credentials, `APP_PORT`, `CORS_ORIGINS`, etc.). The FastAPI app reads them automatically at startup and `docker compose` uses the same file for interpolation.
+2. **Run the stack** (FastAPI + TimescaleDB) locally:
    ```bash
    docker compose up --build
    ```
-   - App endpoint: `http://localhost:6666`
+  - App endpoint: `http://localhost:${APP_PORT:-6666}`
    - Database: `postgresql+asyncpg://pingmedaddy:pingmedaddy@db:5432/pingmedaddy`
-2. **Health check**: there is no `/health` endpoint; hitting `/docs` will confirm the API is ready.
-3. **Authentication**: required. Call `POST /auth/login` with the admin credentials (defaults: `admin` / `changeme`) to obtain a bearer token, then pass `Authorization: Bearer <token>` on every request.
+3. **Health check**: there is no `/health` endpoint; hitting `/docs` will confirm the API is ready.
+4. **Authentication**: required. Call `POST /auth/login` with the admin credentials (defaults stored in `.env`) to obtain a bearer token, then pass `Authorization: Bearer <token>` on every request.
 
 > The CLI mirrors these endpoints. For example, `python -m app.cli target add 1.1.1.1 --frequency 5` is equivalent to the POST `/targets/` call described below.
 
@@ -137,6 +138,78 @@ Use this guide to integrate the PingMeDaddy monitoring API into any other applic
   ]
   ```
 - Events capture start, pause, resume, and delete actions.
+
+### 8. Fetch Aggregated Insights
+- **GET** `/targets/{target_id}/insights`
+- **Query params**:
+  - `window_minutes` (optional, default 60, range 1-1440) — rolling window for stats.
+  - `bucket_seconds` (optional, default 60) — granularity for the timeline series.
+- **Response** (`200 OK`):
+  ```json
+  {
+    "target_id": 42,
+    "target_ip": "192.168.1.254",
+    "created_at": "2025-12-10T22:51:10.456243Z",
+    "window_minutes": 60,
+    "window_start": "2025-12-10T21:55:00Z",
+    "window_end": "2025-12-10T22:55:00Z",
+    "sample_count": 120,
+    "loss_count": 3,
+    "uptime_percent": 97.5,
+    "latency_avg_ms": 12.1,
+    "latency_min_ms": 7.8,
+    "latency_max_ms": 35.0,
+    "latency_p50_ms": 11.0,
+    "latency_p95_ms": 20.2,
+    "latency_p99_ms": 32.5,
+    "timeline": [
+      {
+        "bucket": "2025-12-10T22:30:00Z",
+        "avg_latency_ms": 12.5,
+        "min_latency_ms": 9.1,
+        "max_latency_ms": 17.4,
+        "loss_rate": 0.0,
+        "sample_count": 5
+      }
+    ]
+  }
+  ```
+- Use this payload to display uptime badges, percentile stats, and chart-ready time buckets without fetching raw logs repeatedly.
+
+### 9. Run On-Demand Traceroute
+- **POST** `/targets/{target_id}/traceroute`
+- **Query params** (all optional):
+  - `max_hops` (default 20, max 64)
+  - `timeout` seconds (default 25)
+- **Response** (`200 OK`):
+  ```json
+  {
+    "target_id": 42,
+    "target_ip": "192.168.1.254",
+    "started_at": "2025-12-10T22:58:00Z",
+    "finished_at": "2025-12-10T22:58:01Z",
+    "duration_ms": 850.0,
+    "hops": [
+      {
+        "hop": 1,
+        "host": "router",
+        "ip": "192.168.0.1",
+        "rtt_ms": 1.1,
+        "is_timeout": false,
+        "raw": " 1  router (192.168.0.1)  1.111 ms"
+      },
+      {
+        "hop": 2,
+        "host": null,
+        "ip": null,
+        "rtt_ms": null,
+        "is_timeout": true,
+        "raw": " 2  * * *" 
+      }
+    ]
+  }
+  ```
+- Errors return `503 Service Unavailable` when the traceroute binary is missing or the command times out.
 
 ## Example Integration Flow
 

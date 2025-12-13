@@ -16,18 +16,34 @@ import {
   User,
   X,
 } from 'lucide-react'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:6666'
 const POLL_INTERVAL = 3000
 const LOG_LIMIT = 50
-
-const initialStats = {
-  avg: '-- ms',
-  max: '-- ms',
-  loss: '-- %',
-  hops: '--',
-  lossTone: 'text-slate-500',
-}
+const LOG_VISIBLE_ROWS = 8
+const LOG_ROW_HEIGHT_PX = 40
+const LOGS_MAX_HEIGHT = `${LOG_VISIBLE_ROWS * LOG_ROW_HEIGHT_PX}px`
+const DASHBOARD_INSIGHTS_REFRESH_MS = 60_000
+const DETAIL_INSIGHTS_REFRESH_MS = 15_000
+const WINDOW_PRESETS = [
+  { label: '15 min', value: 15 },
+  { label: '1 h', value: 60 },
+  { label: '4 h', value: 240 },
+  { label: '24 h', value: 1440 },
+]
 
 function App() {
   const [view, setView] = useState('dashboard')
@@ -45,11 +61,68 @@ function App() {
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [loginError, setLoginError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const [insightsMap, setInsightsMap] = useState({})
+  const [isInsightsLoading, setIsInsightsLoading] = useState(false)
+  const [insightWindow, setInsightWindow] = useState(60)
+  const [traceResult, setTraceResult] = useState(null)
+  const [traceError, setTraceError] = useState('')
+  const [isTracing, setIsTracing] = useState(false)
+  const insightsMapRef = useRef({})
+  const insightFreshnessRef = useRef({})
+  const lastDashboardInsightsRef = useRef(0)
   const isAuthenticated = Boolean(token)
 
   const currentTarget = useMemo(
     () => targets.find((target) => target.id === selectedId) ?? null,
     [targets, selectedId],
+  )
+  const currentInsights = useMemo(() => (selectedId ? insightsMap[selectedId] ?? null : null), [insightsMap, selectedId])
+  const timelineData = useMemo(() => buildTimelineData(currentInsights), [currentInsights])
+  const windowLabel = useMemo(() => formatWindowLabel(insightWindow), [insightWindow])
+  const reversedLogs = useMemo(() => [...logs].reverse(), [logs])
+  const lastHop = useMemo(() => {
+    const latest = reversedLogs.find((log) => !log.packet_loss && typeof log.hops === 'number')
+    return typeof latest?.hops === 'number' ? latest.hops : null
+  }, [reversedLogs])
+  const sampleSummary = useMemo(() => {
+    if (!currentInsights) return 'En attente de mesures'
+    return `${currentInsights.sample_count} échantillons`
+  }, [currentInsights])
+  const insightCards = useMemo(
+    () => [
+      {
+        label: 'Uptime',
+        value: formatPercent(currentInsights?.uptime_percent),
+        helper: currentInsights ? `${currentInsights.loss_count} pertes` : sampleSummary,
+        accent: currentInsights?.uptime_percent && currentInsights.uptime_percent < 95 ? 'text-amber-600' : 'text-emerald-600',
+      },
+      {
+        label: 'Latence moyenne',
+        value: formatLatency(currentInsights?.latency_avg_ms),
+        helper: `p50 ${formatLatency(currentInsights?.latency_p50_ms)}`,
+      },
+      {
+        label: 'Latence min',
+        value: formatLatency(currentInsights?.latency_min_ms),
+        helper: `max ${formatLatency(currentInsights?.latency_max_ms)}`,
+      },
+      {
+        label: 'p95',
+        value: formatLatency(currentInsights?.latency_p95_ms),
+        helper: `p99 ${formatLatency(currentInsights?.latency_p99_ms)}`,
+      },
+      {
+        label: 'Fenêtre',
+        value: windowLabel,
+        helper: sampleSummary,
+      },
+      {
+        label: 'Dernier hop',
+        value: typeof lastHop === 'number' ? lastHop : '--',
+        helper: 'issus des logs bruts',
+      },
+    ],
+    [currentInsights, lastHop, sampleSummary, windowLabel],
   )
 
   const logout = useCallback(
@@ -62,12 +135,25 @@ function App() {
       setSelectedId(null)
       setTargets([])
       setLogs([])
+      setInsightsMap({})
+      insightsMapRef.current = {}
+      insightFreshnessRef.current = {}
+      setTraceResult(null)
+      setTraceError('')
       if (message) {
         setError(message)
       }
     },
     [],
   )
+
+  const updateInsightsState = useCallback((targetId, data) => {
+    setInsightsMap((prev) => {
+      const next = { ...prev, [targetId]: data }
+      insightsMapRef.current = next
+      return next
+    })
+  }, [])
 
   const handleLoginSubmit = async (event) => {
     event.preventDefault()
@@ -101,28 +187,6 @@ function App() {
       setLoginForm((prev) => ({ ...prev, password: '' }))
     }
   }
-
-  const stats = useMemo(() => {
-    if (!logs.length) return initialStats
-
-    const total = logs.length
-    const losses = logs.filter((log) => log.packet_loss).length
-    const valid = logs.filter((log) => !log.packet_loss && typeof log.latency_ms === 'number')
-    const avg = valid.length
-      ? (valid.reduce((sum, log) => sum + log.latency_ms, 0) / valid.length).toFixed(1)
-      : null
-    const max = valid.length ? Math.max(...valid.map((log) => log.latency_ms)).toFixed(1) : null
-    const hops = valid.length ? valid[valid.length - 1].hops ?? '--' : '--'
-    const lossRate = ((losses / total) * 100).toFixed(1)
-
-    return {
-      avg: avg ? `${avg} ms` : '--',
-      max: max ? `${max} ms` : '--',
-      loss: `${lossRate} %`,
-      hops,
-      lossTone: parseFloat(lossRate) > 0 ? 'text-red-600' : 'text-emerald-600',
-    }
-  }, [logs])
 
   const apiCall = useCallback(async (endpoint, options = {}) => {
     if (!token) {
@@ -161,12 +225,84 @@ function App() {
     }
   }, [logout, token])
 
+  const fetchInsights = useCallback(
+    async (targetId, { windowMinutes = 60, bucketSeconds = 60 } = {}) => {
+      const params = new URLSearchParams()
+      params.set('window_minutes', String(windowMinutes))
+      params.set('bucket_seconds', String(bucketSeconds))
+      return apiCall(`/targets/${targetId}/insights?${params.toString()}`)
+    },
+    [apiCall],
+  )
+
+  const updateInsights = useCallback(
+    async (targetId, options = {}, force = false) => {
+      const now = Date.now()
+      const last = insightFreshnessRef.current[targetId] ?? 0
+      const freshnessWindow = force ? 0 : DETAIL_INSIGHTS_REFRESH_MS
+      if (!force && now - last < freshnessWindow && insightsMapRef.current[targetId]) {
+        return insightsMapRef.current[targetId]
+      }
+      const data = await fetchInsights(targetId, options)
+      insightFreshnessRef.current[targetId] = now
+      updateInsightsState(targetId, data)
+      return data
+    },
+    [fetchInsights, updateInsightsState],
+  )
+
+  const refreshDashboardInsights = useCallback(
+    async (targetList) => {
+      if (!targetList.length) return
+      const now = Date.now()
+      if (now - lastDashboardInsightsRef.current < DASHBOARD_INSIGHTS_REFRESH_MS) return
+      lastDashboardInsightsRef.current = now
+      await Promise.all(
+        targetList.map((target) =>
+          updateInsights(
+            target.id,
+            { windowMinutes: 60, bucketSeconds: bucketSecondsForWindow(60) },
+            false,
+          ).catch(() => null),
+        ),
+      )
+    },
+    [updateInsights],
+  )
+
+  const refreshSelectedInsights = useCallback(
+    async (force = false, customWindowMinutes, explicitTargetId, { showSpinner = true } = {}) => {
+      const targetId = explicitTargetId ?? selectedId
+      if (!targetId) return null
+      const minutes = customWindowMinutes ?? insightWindow
+      if (showSpinner) {
+        setIsInsightsLoading(true)
+      }
+      try {
+        return await updateInsights(
+          targetId,
+          {
+            windowMinutes: minutes,
+            bucketSeconds: bucketSecondsForWindow(minutes),
+          },
+          force,
+        )
+      } finally {
+        if (showSpinner) {
+          setIsInsightsLoading(false)
+        }
+      }
+    },
+    [insightWindow, selectedId, updateInsights],
+  )
+
   const loadTargets = useCallback(async () => {
     if (!token) return
     try {
       const result = await apiCall('/targets/')
       result.sort((a, b) => a.id - b.id)
       setTargets(result)
+      await refreshDashboardInsights(result)
       if (selectedId && !result.some((target) => target.id === selectedId)) {
         setSelectedId(null)
         setView('dashboard')
@@ -175,9 +311,9 @@ function App() {
     } catch (err) {
       // handled in apiCall
     }
-  }, [apiCall, selectedId, token])
+  }, [apiCall, refreshDashboardInsights, selectedId, token])
 
-  const loadAnalysis = useCallback(async (id) => {
+  const loadLogs = useCallback(async (id) => {
     if (!id || !token) return
     try {
       const result = await apiCall(`/targets/${id}/logs?limit=${LOG_LIMIT}`)
@@ -190,11 +326,12 @@ function App() {
   const handleRefresh = useCallback(async () => {
     if (!token) return
     if (view === 'details' && selectedId) {
-      await loadAnalysis(selectedId)
+      await loadLogs(selectedId)
+      await refreshSelectedInsights(true)
     } else {
       await loadTargets()
     }
-  }, [loadAnalysis, loadTargets, selectedId, token, view])
+  }, [loadLogs, loadTargets, refreshSelectedInsights, selectedId, token, view])
 
   useEffect(() => {
     if (!token) return
@@ -204,21 +341,29 @@ function App() {
   useEffect(() => {
     if (!token) return
     if (view === 'details' && selectedId) {
-      loadAnalysis(selectedId)
+      loadLogs(selectedId)
     }
-  }, [view, selectedId, loadAnalysis, token])
+  }, [view, selectedId, loadLogs, token])
+
+  useEffect(() => {
+    if (!token) return
+    if (view === 'details' && selectedId) {
+      refreshSelectedInsights(true)
+    }
+  }, [refreshSelectedInsights, selectedId, token, view])
 
   useEffect(() => {
     if (!token) return undefined
     const interval = setInterval(() => {
       if (view === 'details' && selectedId) {
-        loadAnalysis(selectedId)
+        loadLogs(selectedId)
+        refreshSelectedInsights(false, undefined, undefined, { showSpinner: false })
       } else if (view === 'dashboard') {
         loadTargets()
       }
     }, POLL_INTERVAL)
     return () => clearInterval(interval)
-  }, [token, view, selectedId, loadAnalysis, loadTargets])
+  }, [loadLogs, loadTargets, refreshSelectedInsights, selectedId, token, view])
 
   const handleCreateSubmit = async (event) => {
     event.preventDefault()
@@ -242,7 +387,10 @@ function App() {
   const handleSelectTarget = (id) => {
     setSelectedId(id)
     setView('details')
-    loadAnalysis(id)
+    setTraceResult(null)
+    setTraceError('')
+    loadLogs(id)
+    refreshSelectedInsights(true, undefined, id)
   }
 
   const toggleCurrentTarget = async () => {
@@ -252,7 +400,8 @@ function App() {
       const action = currentTarget.is_active ? 'pause' : 'resume'
       await apiCall(`/targets/${currentTarget.id}/${action}`, { method: 'POST' })
       await loadTargets()
-      await loadAnalysis(currentTarget.id)
+      await loadLogs(currentTarget.id)
+      await refreshSelectedInsights(true, undefined, currentTarget.id)
     } catch (err) {
       // handled upstream
     } finally {
@@ -271,6 +420,12 @@ function App() {
       setView('dashboard')
       setSelectedId(null)
       setLogs([])
+      setInsightsMap((prev) => {
+        const next = { ...prev }
+        delete next[currentTarget.id]
+        insightsMapRef.current = next
+        return next
+      })
     } catch (err) {
       // handled upstream
     } finally {
@@ -278,7 +433,19 @@ function App() {
     }
   }
 
-  const reversedLogs = useMemo(() => [...logs].reverse(), [logs])
+  const handleRunTraceroute = useCallback(async () => {
+    if (!selectedId) return
+    setIsTracing(true)
+    setTraceError('')
+    try {
+      const result = await apiCall(`/targets/${selectedId}/traceroute`, { method: 'POST' })
+      setTraceResult(result)
+    } catch (err) {
+      setTraceError(err.message ?? 'Traceroute indisponible')
+    } finally {
+      setIsTracing(false)
+    }
+  }, [apiCall, selectedId])
 
   if (!isAuthenticated) {
     return (
@@ -392,8 +559,10 @@ function App() {
                         </td>
                       </tr>
                     )}
-                    {targets.map((target) => (
-                      <tr
+                    {targets.map((target) => {
+                      const rowInsights = insightsMap[target.id]
+                      return (
+                        <tr
                         key={target.id}
                         className={`hover:bg-slate-50 cursor-pointer border-l-4 transition-colors ${target.is_active ? 'border-l-emerald-500' : 'border-l-transparent'}`}
                         onClick={() => handleSelectTarget(target.id)}
@@ -411,6 +580,11 @@ function App() {
                         </td>
                         <td className="px-6 py-4">
                           <div className="font-bold text-slate-700 text-base">{target.ip}</div>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {rowInsights
+                              ? `${formatLatency(rowInsights.latency_avg_ms)} • Uptime ${formatPercent(rowInsights.uptime_percent)}`
+                              : 'Calcul des stats…'}
+                          </p>
                         </td>
                         <td className="px-6 py-4 text-slate-500 font-mono text-xs">{target.frequency}s</td>
                         <td className="px-6 py-4 text-slate-400 text-xs">
@@ -420,7 +594,8 @@ function App() {
                           <ChevronRight className="w-5 h-5 text-slate-300 inline-block" />
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -513,6 +688,8 @@ function App() {
                   <div className="flex items-center gap-2 text-sm text-slate-500">
                     <span className="font-mono">ID: {currentTarget.id}</span> &bull;
                     <span>Freq: {currentTarget.frequency}s</span>
+                    <span className="hidden sm:inline">&bull;</span>
+                    <span>Lancé le {new Date(currentTarget.created_at).toLocaleString()}</span>
                   </div>
                 </div>
                 <span
@@ -542,31 +719,75 @@ function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <StatsCard label="Latence Moyenne" value={stats.avg} />
-              <StatsCard label="Latence Max" value={stats.max} />
-              <StatsCard label="Taux de Perte" value={stats.loss} accent={stats.lossTone} />
-              <StatsCard label="Sauts (Hops)" value={stats.hops ?? '--'} />
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {insightCards.map((card) => (
+                <StatsCard key={card.label} label={card.label} value={card.value} helper={card.helper} accent={card.accent} />
+              ))}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="font-semibold text-slate-700 flex items-center gap-2">
-                    <Activity className="w-4 h-4" /> Courbe de Latence
-                  </h3>
-                  <span className="text-xs text-slate-400 bg-slate-50 px-2 py-1 rounded">50 derniers points</span>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+                  <div>
+                    <h3 className="font-semibold text-slate-700 flex items-center gap-2">
+                      <Activity className="w-4 h-4" /> Analytique de latence
+                    </h3>
+                    <p className="text-xs text-slate-500">Fenêtre {windowLabel} • {sampleSummary}</p>
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-100 rounded-full p-1">
+                    {WINDOW_PRESETS.map((preset) => (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        onClick={() => {
+                          setInsightWindow(preset.value)
+                          refreshSelectedInsights(true, preset.value)
+                        }}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-full transition ${insightWindow === preset.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="chart-container bg-slate-50 rounded border border-slate-100 overflow-hidden">
-                  <LatencyChart logs={logs} />
-                </div>
+                <LatencyTimelineChart data={timelineData} isLoading={isInsightsLoading} />
               </div>
               <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col h-[350px] lg:h-auto">
-                <div className="px-5 py-3 border-b border-slate-200 bg-slate-50">
-                  <h3 className="font-semibold text-slate-700 text-sm">Derniers Échantillons</h3>
+                <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-slate-700 text-sm">Derniers Échantillons</h3>
+                    <p className="text-xs text-slate-400">{logs.length} entrées</p>
+                  </div>
+                  <span className="text-xs text-slate-400 bg-white px-2 py-1 rounded-full border border-slate-200">RAW</span>
                 </div>
                 <LogsTable logs={reversedLogs} />
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-slate-700 text-sm">Perte & disponibilité</h3>
+                  <span className="text-xs text-slate-400">Mise à jour continue</span>
+                </div>
+                <LossTimelineChart data={timelineData} isLoading={isInsightsLoading} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 text-sm">
+                  <div>
+                    <p className="text-xs uppercase text-slate-400">Fenêtre analysée</p>
+                    <p className="font-mono text-slate-700">{formatWindowRange(currentInsights)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-slate-400">Échantillons</p>
+                    <p className="font-semibold text-slate-700">{sampleSummary}</p>
+                  </div>
+                </div>
+              </div>
+              <TraceroutePanel
+                onRun={handleRunTraceroute}
+                isLoading={isTracing}
+                error={traceError}
+                result={traceResult}
+              />
             </div>
           </section>
         )}
@@ -575,11 +796,12 @@ function App() {
   )
 }
 
-function StatsCard({ label, value, accent }) {
+function StatsCard({ label, value, helper, accent }) {
   return (
     <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
       <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${accent ?? 'text-slate-800'}`}>{value}</p>
+      <p className={`text-2xl font-bold mt-1 ${accent ?? 'text-slate-800'}`}>{value ?? '--'}</p>
+      {helper && <p className="text-xs text-slate-500 mt-1">{helper}</p>}
     </div>
   )
 }
@@ -594,7 +816,7 @@ function LogsTable({ logs }) {
   }
 
   return (
-    <div className="overflow-y-auto flex-1">
+    <div className="overflow-y-auto flex-1" style={{ maxHeight: LOGS_MAX_HEIGHT }}>
       <table className="w-full text-left text-xs">
         <thead className="bg-white sticky top-0 z-10 text-slate-500 font-semibold border-b border-slate-100">
           <tr>
@@ -635,116 +857,217 @@ function LogsTable({ logs }) {
   )
 }
 
-function LatencyChart({ logs }) {
-  const canvasRef = useRef(null)
+function LatencyTimelineChart({ data, isLoading }) {
+  if (isLoading) {
+    return <ChartPlaceholder message="Calcul des insights…" heightClass="h-72" />
+  }
+  if (!data.length) {
+    return <ChartPlaceholder message="En attente de mesures agrégées" heightClass="h-72" />
+  }
+  return (
+    <div className="h-72">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" />
+          <XAxis dataKey="label" minTickGap={24} />
+          <YAxis unit=" ms" width={60} />
+          <RechartsTooltip content={<TimelineTooltip />} />
+          <Area
+            type="monotone"
+            dataKey="avg"
+            name="Moyenne"
+            stroke="#0f172a"
+            fill="#0f172a1a"
+            strokeWidth={2}
+            activeDot={{ r: 4 }}
+          />
+          <Line type="monotone" dataKey="min" name="Min" stroke="#10b981" dot={false} strokeWidth={1.5} />
+          <Line type="monotone" dataKey="max" name="Max" stroke="#ef4444" dot={false} strokeWidth={1.2} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
 
-  const drawChart = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const parent = canvas.parentElement
-    if (!parent) return
+function LossTimelineChart({ data, isLoading }) {
+  if (isLoading) {
+    return <ChartPlaceholder message="Mise à jour…" heightClass="h-56" />
+  }
+  if (!data.length) {
+    return <ChartPlaceholder message="Aucune perte mesurée" heightClass="h-56" />
+  }
+  return (
+    <div className="h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+          <XAxis dataKey="label" minTickGap={24} />
+          <YAxis unit=" %" width={50} domain={[0, 'auto']} />
+          <RechartsTooltip
+            formatter={(value) => [
+              `${typeof value === 'number' ? value.toFixed(1) : value} %`,
+              'Perte',
+            ]}
+            labelFormatter={(label, payload) => payload?.[0]?.payload.fullLabel ?? label}
+          />
+          <Bar dataKey="lossRatePct" name="Perte (%)" fill="#fb923c" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
 
-    const width = parent.clientWidth
-    const height = parent.clientHeight
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = width * dpr
-    canvas.height = height * dpr
+function TimelineTooltip({ active, payload }) {
+  if (!active || !payload || !payload.length) return null
+  const point = payload[0].payload
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm text-xs space-y-1">
+      <p className="font-semibold text-slate-700">{point.fullLabel}</p>
+      <p className="text-slate-500">{point.samples} échantillons</p>
+      <div className="pt-1 space-y-1">
+        <div className="flex justify-between">
+          <span>Moyenne</span>
+          <span className="font-semibold">{formatLatency(point.avg)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>Min</span>
+          <span>{formatLatency(point.min)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>Max</span>
+          <span>{formatLatency(point.max)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>Perte</span>
+          <span>{formatPercent(point.lossRatePct)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.scale(dpr, dpr)
-    ctx.clearRect(0, 0, width, height)
+function TraceroutePanel({ onRun, isLoading, error, result }) {
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col">
+      <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-slate-700 text-sm">Traceroute à la demande</h3>
+          <p className="text-xs text-slate-500">Exécutez un traceroute depuis le backend</p>
+        </div>
+        <button
+          type="button"
+          onClick={onRun}
+          disabled={isLoading}
+          className="px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white hover:bg-slate-700 transition disabled:opacity-60"
+        >
+          {isLoading ? 'En cours…' : 'Lancer'}
+        </button>
+      </div>
+      <div className="p-5 space-y-4 flex-1 flex flex-col">
+        {error && (
+          <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-md">{error}</div>
+        )}
+        {result ? (
+          <>
+            <p className="text-xs text-slate-500">
+              Dernier run {formatDateTime(result.finished_at)} • {result.hops.length} hops • {Math.round(result.duration_ms)} ms
+            </p>
+            <div className="overflow-x-auto border border-slate-100 rounded-md flex-1">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Hop</th>
+                    <th className="px-3 py-2 text-left">Noeud</th>
+                    <th className="px-3 py-2 text-left">IP</th>
+                    <th className="px-3 py-2 text-right">Latence</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {result.hops.map((hop) => (
+                    <tr key={hop.hop} className={hop.is_timeout ? 'bg-amber-50' : 'bg-white'}>
+                      <td className="px-3 py-1.5 font-mono text-slate-500">{hop.hop}</td>
+                      <td className="px-3 py-1.5 text-slate-700">{hop.host ?? 'timeout'}</td>
+                      <td className="px-3 py-1.5 font-mono text-slate-500">{hop.ip ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-right text-slate-700">
+                        {hop.is_timeout ? '—' : formatLatency(hop.rtt_ms)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-slate-400 font-mono">{result.ip}</p>
+          </>
+        ) : (
+          <div className="text-sm text-slate-500 flex-1 flex items-center">
+            Lancez un traceroute pour visualiser le chemin réseau.
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
-    if (!logs.length) return
+function ChartPlaceholder({ message, heightClass }) {
+  return (
+    <div className={`${heightClass} bg-slate-50 border border-dashed border-slate-200 rounded-lg flex items-center justify-center`}>
+      <p className="text-sm text-slate-500">{message}</p>
+    </div>
+  )
+}
 
-    const padding = { top: 20, right: 10, bottom: 24, left: 48 }
-    const plotWidth = width - padding.left - padding.right
-    const plotHeight = height - padding.top - padding.bottom
-    const valid = logs.filter((log) => !log.packet_loss && typeof log.latency_ms === 'number')
-    const maxLatency = valid.length ? Math.max(...valid.map((log) => log.latency_ms)) : 10
-    const yScale = Math.max(maxLatency * 1.2, 10)
-    const segments = Math.max(logs.length - 1, 1)
-    const getX = (index) => padding.left + (index / segments) * plotWidth
-    const getY = (latency) => padding.top + plotHeight - (latency / yScale) * plotHeight
+function formatLatency(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '--'
+  return `${value.toFixed(1)} ms`
+}
 
-    // Grid
-    ctx.strokeStyle = '#e2e8f0'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    for (let i = 0; i <= 5; i += 1) {
-      const y = padding.top + (plotHeight * i) / 5
-      ctx.moveTo(padding.left, y)
-      ctx.lineTo(padding.left + plotWidth, y)
-      ctx.fillStyle = '#94a3b8'
-      ctx.font = '10px "Space Grotesk", sans-serif'
-      ctx.textAlign = 'right'
-      const label = Math.round(yScale - (yScale * i) / 5)
-      ctx.fillText(`${label}ms`, padding.left - 6, y + 3)
+function formatPercent(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '--'
+  return `${value.toFixed(1)} %`
+}
+
+function formatWindowLabel(minutes) {
+  if (minutes >= 60) {
+    const hours = minutes / 60
+    return `${hours % 1 === 0 ? hours : hours.toFixed(1)} h`
+  }
+  return `${minutes} min`
+}
+
+function formatWindowRange(insights) {
+  if (!insights?.window_start || !insights?.window_end) return '--'
+  return `${formatDateTime(insights.window_start)} -> ${formatDateTime(insights.window_end)}`
+}
+
+function formatDateTime(value) {
+  if (!value) return '--'
+  return new Date(value).toLocaleString()
+}
+
+function buildTimelineData(insights) {
+  if (!insights?.timeline?.length) return []
+  return insights.timeline.map((point) => {
+    const date = new Date(point.bucket)
+    const label = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const lossRatePct = Number(((point.loss_rate ?? 0) * 100).toFixed(2))
+    return {
+      label,
+      fullLabel: date.toLocaleString(),
+      avg: point.avg_latency_ms ?? null,
+      min: point.min_latency_ms ?? null,
+      max: point.max_latency_ms ?? null,
+      lossRatePct,
+      samples: point.sample_count,
     }
-    ctx.stroke()
+  })
+}
 
-    // Curve
-    ctx.strokeStyle = '#0f172a'
-    ctx.lineWidth = 2
-    ctx.lineJoin = 'round'
-    ctx.beginPath()
-    let drawing = false
-    logs.forEach((log, index) => {
-      if (log.packet_loss || typeof log.latency_ms !== 'number') {
-        drawing = false
-        return
-      }
-      const x = getX(index)
-      const y = getY(log.latency_ms)
-      if (!drawing) {
-        ctx.moveTo(x, y)
-        drawing = true
-      } else {
-        ctx.lineTo(x, y)
-      }
-    })
-    ctx.stroke()
-
-    // Points & losses
-    logs.forEach((log, index) => {
-      const x = getX(index)
-      if (log.packet_loss) {
-        ctx.beginPath()
-        ctx.strokeStyle = '#ef4444'
-        ctx.lineWidth = 1
-        ctx.setLineDash([4, 4])
-        ctx.moveTo(x, padding.top)
-        ctx.lineTo(x, padding.top + plotHeight)
-        ctx.stroke()
-        ctx.setLineDash([])
-        return
-      }
-      if (logs.length < 80 && typeof log.latency_ms === 'number') {
-        const y = getY(log.latency_ms)
-        ctx.beginPath()
-        ctx.fillStyle = '#ffffff'
-        ctx.strokeStyle = '#3b82f6'
-        ctx.lineWidth = 2
-        ctx.arc(x, y, 3, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.stroke()
-      }
-    })
-  }, [logs])
-
-  useEffect(() => {
-    drawChart()
-  }, [drawChart])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const observer = new ResizeObserver(() => drawChart())
-    observer.observe(canvas.parentElement)
-    return () => observer.disconnect()
-  }, [drawChart])
-
-  return <canvas ref={canvasRef} className="w-full h-full" />
+function bucketSecondsForWindow(windowMinutes) {
+  if (windowMinutes <= 15) return 30
+  if (windowMinutes <= 60) return 60
+  if (windowMinutes <= 240) return 120
+  if (windowMinutes <= 720) return 300
+  return 900
 }
 
 function LoginScreen({ form, onChange, onSubmit, error, isLoading }) {

@@ -1,9 +1,11 @@
 import os
+
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_cli.db"
+os.environ["CORS_ORIGINS"] = "http://test"
+
 import json
 import pytest
 import pytest_asyncio
-
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_cli.db"
 
 from app import cli  # noqa: E402
 from app.services import pinger  # noqa: E402

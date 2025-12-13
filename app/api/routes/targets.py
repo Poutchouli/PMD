@@ -5,8 +5,18 @@ from sqlalchemy.future import select
 
 from app.db import get_db
 from app.models import MonitorTarget, PingLog, EventLog
-from app.schemas import TargetCreate, TargetOut, TargetStatus, PingLogOut, EventLogOut
+from app.schemas import (
+    TargetCreate,
+    TargetOut,
+    TargetStatus,
+    PingLogOut,
+    EventLogOut,
+    TargetInsights,
+    TracerouteResponse,
+)
 from app.services.scheduler import scheduler
+from app.services.stats import compute_target_insights
+from app.services import traceroute as traceroute_service
 from app.security import require_auth
 
 router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(require_auth)])
@@ -98,3 +108,49 @@ async def get_events(target_id: int, db: AsyncSession = Depends(get_db)):
         .order_by(EventLog.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/{target_id}/insights", response_model=TargetInsights)
+async def get_insights(
+    target_id: int,
+    window_minutes: int = Query(60, ge=1, le=24 * 60),
+    bucket_seconds: int = Query(60, ge=10, le=3600),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await compute_target_insights(
+        db,
+        target_id,
+        window_minutes=window_minutes,
+        bucket_seconds=bucket_seconds,
+    )
+    if not data:
+        raise HTTPException(status_code=404, detail="Target not found")
+    return TargetInsights(**data)
+
+
+@router.post("/{target_id}/traceroute", response_model=TracerouteResponse)
+async def trigger_traceroute(
+    target_id: int,
+    max_hops: int = Query(20, ge=1, le=64),
+    timeout: float = Query(25.0, ge=1.0, le=120.0),
+    db: AsyncSession = Depends(get_db),
+):
+    target = await db.get(MonitorTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+    try:
+        result = await traceroute_service.run_traceroute(
+            target.ip_address,
+            max_hops=max_hops,
+            timeout=timeout,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return TracerouteResponse(
+        target_id=target.id,
+        target_ip=target.ip_address,
+        started_at=result["started_at"],
+        finished_at=result["finished_at"],
+        duration_ms=result["duration_ms"],
+        hops=result.get("hops", []),
+    )

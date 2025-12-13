@@ -1,4 +1,11 @@
 import os
+
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_pingmedaddy.db"
+os.environ["ADMIN_USERNAME"] = "admin"
+os.environ["ADMIN_PASSWORD"] = "changeme"
+os.environ["AUTH_SECRET"] = "test-secret"
+os.environ["CORS_ORIGINS"] = "http://test"
+
 import asyncio
 import pytest
 import httpx
@@ -9,11 +16,6 @@ from app.services import pinger
 from app.services import scheduler as scheduler_service
 from app.db import engine
 from app.models import Base
-
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_pingmedaddy.db"
-os.environ["ADMIN_USERNAME"] = "admin"
-os.environ["ADMIN_PASSWORD"] = "changeme"
-os.environ["AUTH_SECRET"] = "test-secret"
 
 get_settings.cache_clear()
 
