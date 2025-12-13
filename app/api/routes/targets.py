@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -80,7 +81,9 @@ async def delete_target(target_id: int, db: AsyncSession = Depends(get_db)):
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
     await scheduler.stop_for_target(target_id, "Tracking stopped and target deleted")
-    await db.delete(target)
+    await db.execute(delete(PingLog).where(PingLog.target_id == target_id))
+    await db.execute(delete(EventLog).where(EventLog.target_id == target_id))
+    await db.execute(delete(MonitorTarget).where(MonitorTarget.id == target_id))
     await db.commit()
     return TargetStatus(message="Target deleted", id=target_id)
 

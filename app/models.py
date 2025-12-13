@@ -18,14 +18,12 @@ class MonitorTarget(Base):
         "PingLog",
         back_populates="target",
         lazy="selectin",
-        cascade="all, delete-orphan",
         passive_deletes=True,
     )
     events = relationship(
         "EventLog",
         back_populates="target",
         lazy="selectin",
-        cascade="all, delete-orphan",
         passive_deletes=True,
     )
 
