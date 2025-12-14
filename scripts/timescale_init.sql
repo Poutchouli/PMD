@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS monitor_targets (
     ip_address TEXT UNIQUE NOT NULL,
     frequency INTEGER NOT NULL DEFAULT 1,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    display_url TEXT,
+    notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

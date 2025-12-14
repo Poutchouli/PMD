@@ -1,5 +1,8 @@
+import csv
+from io import StringIO
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -10,6 +13,7 @@ from app.schemas import (
     TargetCreate,
     TargetOut,
     TargetStatus,
+    TargetUpdate,
     PingLogOut,
     EventLogOut,
     TargetInsights,
@@ -23,13 +27,30 @@ from app.security import require_auth
 router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(require_auth)])
 
 
+def _to_target_out(target: MonitorTarget) -> TargetOut:
+    return TargetOut(
+        id=target.id,
+        ip=target.ip_address,
+        frequency=target.frequency,
+        is_active=target.is_active,
+        created_at=target.created_at,
+        url=target.display_url,
+        notes=target.notes,
+    )
+
+
 @router.post("/", response_model=TargetStatus)
 async def add_target(payload: TargetCreate, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(MonitorTarget).where(MonitorTarget.ip_address == str(payload.ip)))
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="IP already monitored")
 
-    target = MonitorTarget(ip_address=str(payload.ip), frequency=payload.frequency)
+    target = MonitorTarget(
+        ip_address=str(payload.ip),
+        frequency=payload.frequency,
+        display_url=str(payload.url) if payload.url else None,
+        notes=payload.notes,
+    )
     db.add(target)
     await db.commit()
     await db.refresh(target)
@@ -41,16 +62,27 @@ async def add_target(payload: TargetCreate, db: AsyncSession = Depends(get_db)):
 @router.get("/", response_model=List[TargetOut])
 async def list_targets(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(MonitorTarget))
-    return [
-        TargetOut(
-            id=t.id,
-            ip=t.ip_address,
-            frequency=t.frequency,
-            is_active=t.is_active,
-            created_at=t.created_at,
-        )
-        for t in result.scalars().all()
-    ]
+    return [_to_target_out(t) for t in result.scalars().all()]
+
+
+@router.patch("/{target_id}", response_model=TargetOut)
+async def update_target(target_id: int, payload: TargetUpdate, db: AsyncSession = Depends(get_db)):
+    target = await db.get(MonitorTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    if "frequency" in payload.model_fields_set:
+        target.frequency = payload.frequency if payload.frequency is not None else target.frequency
+
+    if "url" in payload.model_fields_set:
+        target.display_url = str(payload.url) if payload.url else None
+
+    if "notes" in payload.model_fields_set:
+        target.notes = payload.notes
+
+    await db.commit()
+    await db.refresh(target)
+    return _to_target_out(target)
 
 
 @router.post("/{target_id}/pause", response_model=TargetStatus)
@@ -101,6 +133,46 @@ async def get_logs(
         .limit(limit)
     )
     return list(reversed(result.scalars().all()))
+
+
+@router.get("/{target_id}/logs/export")
+async def export_logs(target_id: int, db: AsyncSession = Depends(get_db)):
+    target = await db.get(MonitorTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    stmt = (
+        select(PingLog)
+        .where(PingLog.target_id == target_id)
+        .order_by(PingLog.time.asc())
+    )
+    result = await db.stream(stmt)
+
+    async def csv_rows():
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["time", "target_id", "target_ip", "latency_ms", "hops", "packet_loss"])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        async for log in result.scalars():
+            writer.writerow(
+                [
+                    log.time.isoformat(),
+                    log.target_id,
+                    target.ip_address,
+                    "" if log.latency_ms is None else log.latency_ms,
+                    "" if log.hops is None else log.hops,
+                    int(bool(log.packet_loss)),
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    filename = f"pingmedaddy-target-{target.id}-logs.csv"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(csv_rows(), media_type="text/csv", headers=headers)
 
 
 @router.get("/{target_id}/events", response_model=List[EventLogOut])

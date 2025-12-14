@@ -1,11 +1,32 @@
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field, IPvAnyAddress, ConfigDict
+from pydantic import AnyHttpUrl, BaseModel, Field, IPvAnyAddress, ConfigDict, field_validator
 
 
 class TargetCreate(BaseModel):
     ip: IPvAnyAddress = Field(..., description="IP to monitor")
     frequency: int = Field(1, ge=1, le=3600, description="Seconds between pings")
+    url: Optional[AnyHttpUrl] = Field(None, description="Optional interface URL")
+    notes: Optional[str] = Field(None, max_length=2000, description="Free-form notes")
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _normalize_url(cls, value: Optional[str]):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _normalize_notes(cls, value: Optional[str]):
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class TargetOut(BaseModel):
@@ -14,7 +35,36 @@ class TargetOut(BaseModel):
     frequency: int
     is_active: bool
     created_at: datetime
+    url: Optional[str]
+    notes: Optional[str]
     model_config = ConfigDict(from_attributes=True)
+
+
+class TargetUpdate(BaseModel):
+    frequency: Optional[int] = Field(None, ge=1, le=3600)
+    url: Optional[AnyHttpUrl] = Field(None, description="Optional interface URL")
+    notes: Optional[str] = Field(None, max_length=2000)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _normalize_update_url(cls, value: Optional[str]):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _normalize_update_notes(cls, value: Optional[str]):
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class TargetStatus(BaseModel):

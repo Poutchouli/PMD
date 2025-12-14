@@ -12,6 +12,8 @@ class MonitorTarget(Base):
     ip_address = Column(String, unique=True, index=True, nullable=False)
     frequency = Column(Integer, default=1)  # seconds between pings
     is_active = Column(Boolean, default=True)
+    display_url = Column(String(512), nullable=True)
+    notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     logs = relationship(

@@ -72,6 +72,25 @@ async def test_create_pause_resume_flow(monkeypatch):
         assert resp.status_code == 200
         target_id = resp.json()["id"]
 
+        resp = await client.patch(
+            f"/targets/{target_id}",
+            json={"notes": "Router salle serveur", "url": "https://router.example"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        updated = resp.json()
+        assert updated["notes"] == "Router salle serveur"
+        assert updated["url"].startswith("https://router.example")
+
+        resp = await client.patch(
+            f"/targets/{target_id}",
+            json={"notes": ""},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        updated = resp.json()
+        assert updated["notes"] is None
+
         await asyncio.sleep(1.1)
 
         resp = await client.post(f"/targets/{target_id}/pause", headers=headers)
@@ -87,6 +106,16 @@ async def test_create_pause_resume_flow(monkeypatch):
         logs = resp.json()
         assert len(logs) >= 1
         assert logs[-1]["latency_ms"] == 10.0
+
+        resp = await client.get(
+            f"/targets/{target_id}/logs/export",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/csv")
+        csv_body = resp.text.strip().splitlines()
+        assert csv_body[0].startswith("time,target_id,target_ip")
+        assert len(csv_body) >= 2
 
         resp = await client.get(f"/targets/{target_id}/events", headers=headers)
         assert resp.status_code == 200

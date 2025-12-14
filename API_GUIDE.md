@@ -42,11 +42,15 @@ Use this guide to integrate the PingMeDaddy monitoring API into any other applic
   ```json
   {
     "ip": "192.168.1.254",
-    "frequency": 5
+    "frequency": 5,
+    "url": "https://router.lan",
+    "notes": "Console admin admin"
   }
   ```
   - `ip`: IPv4 or IPv6 address to monitor (validated).
   - `frequency`: seconds between pings (1-3600, default 1).
+  - `url` *(optional)*: HTTP(S) interface shortcut shown in the dashboard.
+  - `notes` *(optional)*: free-form details visible in the target drawer.
 - **Responses**:
   - `200 OK`:
     ```json
@@ -68,9 +72,24 @@ Use this guide to integrate the PingMeDaddy monitoring API into any other applic
       "ip": "192.168.1.254",
       "frequency": 5,
       "is_active": true,
-      "created_at": "2025-12-10T22:51:10.456243Z"
+      "created_at": "2025-12-10T22:51:10.456243Z",
+      "url": "https://router.lan",
+      "notes": "Console admin admin"
     }
   ]
+
+### 2b. Update Target Metadata
+- **PATCH** `/targets/{target_id}`
+- **Body** (`application/json`): any combination of the fields below
+  ```json
+  {
+    "frequency": 10,
+    "url": "https://router.lan",
+    "notes": "Console admin admin"
+  }
+  ```
+- **Response** (`200 OK`): the full target document (same shape as `GET /targets/`).
+- Use this to adjust notes/URL from the UI without recreating the monitor.
   ```
 
 ### 3. Pause Monitoring
@@ -122,6 +141,11 @@ Use this guide to integrate the PingMeDaddy monitoring API into any other applic
   ]
   ```
 - Gathers raw pings (from Timescale hypertable). Packet loss is true when ping failed.
+
+### 6b. Export Ping Logs
+- **GET** `/targets/{target_id}/logs/export`
+- **Response** (`200 OK`, `text/csv` attachment): streamed CSV with the columns `time,target_id,target_ip,latency_ms,hops,packet_loss`.
+- Use this for long-term archival or to ingest the full, unpaginated ping history elsewhere.
 
 ### 7. Fetch Event Logs
 - **GET** `/targets/{target_id}/events`

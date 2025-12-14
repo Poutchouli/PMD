@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import json
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.future import select
 
@@ -53,6 +53,8 @@ def _target_to_dict(target: MonitorTarget) -> Dict[str, Any]:
         "frequency": target.frequency,
         "is_active": target.is_active,
         "created_at": target.created_at,
+        "url": target.display_url,
+        "notes": target.notes,
     }
 
 
@@ -75,7 +77,7 @@ def _event_to_dict(event: EventLog) -> Dict[str, Any]:
     }
 
 
-async def _add_target(ip: str, frequency: int) -> MonitorTarget:
+async def _add_target(ip: str, frequency: int, url: Optional[str] = None, notes: Optional[str] = None) -> MonitorTarget:
     async with AsyncSessionLocal() as session:
         existing = await session.execute(
             select(MonitorTarget).where(MonitorTarget.ip_address == ip)
@@ -83,7 +85,12 @@ async def _add_target(ip: str, frequency: int) -> MonitorTarget:
         if existing.scalars().first():
             raise CliError("IP already monitored")
 
-        target = MonitorTarget(ip_address=ip, frequency=frequency)
+        target = MonitorTarget(
+            ip_address=ip,
+            frequency=frequency,
+            display_url=url.strip() or None if isinstance(url, str) else url,
+            notes=notes.strip() or None if isinstance(notes, str) else notes,
+        )
         session.add(target)
         await session.commit()
         await session.refresh(target)
@@ -163,7 +170,7 @@ async def _handle(args: argparse.Namespace) -> None:
 
     if args.command == "target":
         if args.action == "add":
-            target = await _add_target(args.ip, args.frequency)
+            target = await _add_target(args.ip, args.frequency, args.url, args.notes)
             _print_output(_target_to_dict(target), args.as_json)
             return
 
@@ -230,6 +237,8 @@ def _build_parser() -> argparse.ArgumentParser:
     add_parser = target_sub.add_parser("add", help="Add a target")
     add_parser.add_argument("ip", help="IP to monitor")
     add_parser.add_argument("--frequency", type=int, default=1, help="Seconds between pings")
+    add_parser.add_argument("--url", help="Optional interface URL", default=None)
+    add_parser.add_argument("--notes", help="Optional notes for this target", default=None)
     _add_json_option(add_parser)
 
     list_parser = target_sub.add_parser("list", help="List all targets")
