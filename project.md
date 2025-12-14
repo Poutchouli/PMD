@@ -80,3 +80,14 @@ Useful commands:
 - Recreate without cache: `docker compose build --no-cache app`
 - Tail logs: `docker compose logs -f app`
 - Exec in app: `docker compose exec app bash`
+
+## Synthetic history seeding
+
+To demo charts with multi-year telemetry without waiting in real time, seed the
+database with deterministic ping samples:
+
+1. Activate the virtualenv: `source .venv/bin/activate`.
+2. Run `python scripts/seed_historical_data.py --targets 12 --years 2.5 --interval-seconds 60 --reset`.
+3. The script backfills each synthetic target, prints how many ping rows were inserted, and reports SQLite file growth (Postgres users can inspect table sizes directly).
+
+Flags let you control target count, retention horizon, sampling interval, and RNG seed. Use `--quiet` for CI or automated workflows. This dataset feeds the aggregation test-suite and mirrors the Timescale retention strategy (raw seconds ➜ 1-minute ➜ 1-hour).
