@@ -20,6 +20,8 @@ import LatencyTimelineChart from './components/analytics/LatencyTimelineChart'
 import LossTimelineChart from './components/analytics/LossTimelineChart'
 import LogsTable from './components/logs/LogsTable'
 import TraceroutePanel from './components/network/TraceroutePanel'
+import LanguageSelector from './components/common/LanguageSelector'
+import { useTranslation } from './i18n/LanguageProvider'
 import { formatLatency, formatPercent, formatWindowLabel, formatWindowRange } from './utils/formatters'
 import { buildTimelineData, bucketSecondsForWindow } from './utils/insights'
 
@@ -36,6 +38,7 @@ const WINDOW_PRESETS = [
 ]
 
 function App() {
+  const { t } = useTranslation()
   const [view, setView] = useState('dashboard')
   const [targets, setTargets] = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -75,44 +78,44 @@ function App() {
     return typeof latest?.hops === 'number' ? latest.hops : null
   }, [reversedLogs])
   const sampleSummary = useMemo(() => {
-    if (!currentInsights) return 'En attente de mesures'
-    return `${currentInsights.sample_count} échantillons`
-  }, [currentInsights])
+    if (!currentInsights) return t('insights.waiting')
+    return t('insights.sampleCount', { count: currentInsights.sample_count ?? 0 })
+  }, [currentInsights, t])
   const insightCards = useMemo(
     () => [
       {
-        label: 'Uptime',
+        label: t('insights.cards.uptime'),
         value: formatPercent(currentInsights?.uptime_percent),
-        helper: currentInsights ? `${currentInsights.loss_count} pertes` : sampleSummary,
+        helper: currentInsights ? t('insights.lossCount', { count: currentInsights.loss_count ?? 0 }) : sampleSummary,
         accent: currentInsights?.uptime_percent && currentInsights.uptime_percent < 95 ? 'text-amber-600' : 'text-emerald-600',
       },
       {
-        label: 'Latence moyenne',
+        label: t('insights.cards.latencyAvg'),
         value: formatLatency(currentInsights?.latency_avg_ms),
-        helper: `p50 ${formatLatency(currentInsights?.latency_p50_ms)}`,
+        helper: t('insights.helpers.p50', { value: formatLatency(currentInsights?.latency_p50_ms) }),
       },
       {
-        label: 'Latence min',
+        label: t('insights.cards.latencyMin'),
         value: formatLatency(currentInsights?.latency_min_ms),
-        helper: `max ${formatLatency(currentInsights?.latency_max_ms)}`,
+        helper: t('insights.helpers.max', { value: formatLatency(currentInsights?.latency_max_ms) }),
       },
       {
-        label: 'p95',
+        label: t('insights.cards.latencyP95'),
         value: formatLatency(currentInsights?.latency_p95_ms),
-        helper: `p99 ${formatLatency(currentInsights?.latency_p99_ms)}`,
+        helper: t('insights.helpers.p99', { value: formatLatency(currentInsights?.latency_p99_ms) }),
       },
       {
-        label: 'Fenêtre',
+        label: t('insights.cards.window'),
         value: windowLabel,
         helper: sampleSummary,
       },
       {
-        label: 'Dernier hop',
+        label: t('insights.cards.lastHop'),
         value: typeof lastHop === 'number' ? lastHop : '--',
-        helper: 'issus des logs bruts',
+        helper: t('insights.cards.lastHopHelper'),
       },
     ],
-    [currentInsights, lastHop, sampleSummary, windowLabel],
+    [currentInsights, lastHop, sampleSummary, t, windowLabel],
   )
 
   const logout = useCallback(
@@ -161,7 +164,7 @@ function App() {
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || !payload?.access_token) {
-        throw new Error(payload?.detail ?? 'Identifiants invalides')
+        throw new Error(payload?.detail ?? t('auth.invalidCredentials'))
       }
       if (typeof window !== 'undefined') {
         window.localStorage.setItem('pmd_token', payload.access_token)
@@ -171,7 +174,7 @@ function App() {
       setLoginError('')
       setError('')
     } catch (err) {
-      setLoginError(err.message ?? 'Impossible de se connecter')
+      setLoginError(err.message ?? t('auth.genericError'))
     } finally {
       setIsLoggingIn(false)
       setLoginForm((prev) => ({ ...prev, password: '' }))
@@ -180,7 +183,7 @@ function App() {
 
   const apiCall = useCallback(async (endpoint, options = {}) => {
     if (!token) {
-      throw new Error('Non authentifié')
+      throw new Error(t('auth.notAuthenticated'))
     }
     try {
       const headers = new Headers(options.headers ?? {})
@@ -190,8 +193,8 @@ function App() {
         headers,
       })
       if (response.status === 401) {
-        logout('Session expirée, merci de vous reconnecter.')
-        throw new Error('Session expirée')
+        logout(t('alerts.sessionExpired'))
+        throw new Error(t('alerts.sessionExpired'))
       }
       if (!response.ok) {
         let detail
@@ -208,12 +211,12 @@ function App() {
       return await response.json()
     } catch (err) {
       console.error('API Error:', err)
-      if (!String(err.message).includes('Session expirée')) {
-        setError("L'API est inaccessible. Vérifiez Docker ou la configuration réseau.")
+      if (!String(err.message).includes(t('alerts.sessionExpired'))) {
+        setError(t('alerts.apiUnavailable'))
       }
       throw err
     }
-  }, [logout, token])
+  }, [logout, t, token])
 
   const fetchInsights = useCallback(
     async (targetId, { windowMinutes = 60, bucketSeconds = 60 } = {}) => {
@@ -401,7 +404,7 @@ function App() {
 
   const deleteCurrentTarget = async () => {
     if (!currentTarget) return
-    const confirmDelete = window.confirm("Arrêter la surveillance et supprimer l'historique ?")
+    const confirmDelete = window.confirm(t('details.deleteConfirm'))
     if (!confirmDelete) return
     setIsBusy(true)
     try {
@@ -431,11 +434,11 @@ function App() {
       const result = await apiCall(`/targets/${selectedId}/traceroute`, { method: 'POST' })
       setTraceResult(result)
     } catch (err) {
-      setTraceError(err.message ?? 'Traceroute indisponible')
+      setTraceError(err.message ?? t('traceroute.unavailable'))
     } finally {
       setIsTracing(false)
     }
-  }, [apiCall, selectedId])
+  }, [apiCall, selectedId, t])
 
   if (!isAuthenticated) {
     return (
@@ -466,16 +469,18 @@ function App() {
             </div>
             <div>
               <p className="text-xl font-bold tracking-tight text-slate-800">
-                PingMeDaddy <span className="text-slate-400 font-normal text-sm">Analytics</span>
+                PingMeDaddy <span className="text-slate-400 font-normal text-sm">{t('header.analytics')}</span>
               </p>
             </div>
           </button>
           <div className="flex items-center gap-2">
+            <LanguageSelector />
             <button
               type="button"
               onClick={handleRefresh}
               className="p-2 text-slate-400 hover:text-slate-600 transition-colors rounded-full hover:bg-slate-100"
-              title="Actualiser les données"
+              title={t('header.refreshTitle')}
+              aria-label={t('header.refreshTitle')}
             >
               <RefreshCw className="w-4 h-4" />
             </button>
@@ -483,9 +488,10 @@ function App() {
               type="button"
               onClick={() => logout()}
               className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50"
+              aria-label={t('header.logout')}
             >
               <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Déconnexion</span>
+              <span className="hidden sm:inline">{t('header.logout')}</span>
             </button>
           </div>
         </div>
@@ -497,7 +503,7 @@ function App() {
             <div className="flex items-center gap-3">
               <AlertTriangle className="w-5 h-5" />
               <div>
-                <p className="font-bold">Erreur de connexion</p>
+                <p className="font-bold">{t('alerts.connectionTitle')}</p>
                 <p className="text-sm">{error}</p>
               </div>
             </div>
@@ -511,8 +517,8 @@ function App() {
           <section className="fade-in" aria-live="polite">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <div>
-                <h2 className="text-2xl font-semibold text-slate-800">Cibles surveillées</h2>
-                <p className="text-slate-500 text-sm mt-1">Sélectionnez une cible pour voir l'analyse détaillée.</p>
+                <h2 className="text-2xl font-semibold text-slate-800">{t('dashboard.title')}</h2>
+                <p className="text-slate-500 text-sm mt-1">{t('dashboard.subtitle')}</p>
               </div>
               <button
                 type="button"
@@ -522,7 +528,7 @@ function App() {
                 }}
                 className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-md shadow-sm transition-all text-sm font-medium"
               >
-                <Plus className="w-4 h-4" /> Ajouter une cible
+                <Plus className="w-4 h-4" /> {t('dashboard.addTarget')}
               </button>
             </div>
 
@@ -531,11 +537,11 @@ function App() {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
                     <tr>
-                      <th className="px-6 py-4 w-24">État</th>
-                      <th className="px-6 py-4">Adresse IP / Hôte</th>
-                      <th className="px-6 py-4">Fréquence</th>
-                      <th className="px-6 py-4">Dernière activité</th>
-                      <th className="px-6 py-4 text-right">Action</th>
+                      <th className="px-6 py-4 w-24">{t('dashboard.table.state')}</th>
+                      <th className="px-6 py-4">{t('dashboard.table.address')}</th>
+                      <th className="px-6 py-4">{t('dashboard.table.frequency')}</th>
+                      <th className="px-6 py-4">{t('dashboard.table.lastActivity')}</th>
+                      <th className="px-6 py-4 text-right">{t('dashboard.table.action')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -544,7 +550,7 @@ function App() {
                         <td colSpan={5} className="p-12 text-center">
                           <div className="flex flex-col items-center text-slate-500 gap-3">
                             <Server className="w-10 h-10 text-slate-300" />
-                            <p>Ajoutez votre première IP pour commencer l'analyse.</p>
+                            <p>{t('dashboard.emptyState')}</p>
                           </div>
                         </td>
                       </tr>
@@ -560,11 +566,11 @@ function App() {
                         <td className="px-6 py-4">
                           {target.is_active ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 uppercase tracking-wide">
-                              Actif
+                              {t('dashboard.statusActive')}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase tracking-wide">
-                              Pause
+                              {t('dashboard.statusPaused')}
                             </span>
                           )}
                         </td>
@@ -572,8 +578,8 @@ function App() {
                           <div className="font-bold text-slate-700 text-base">{target.ip}</div>
                           <p className="text-xs text-slate-500 mt-1">
                             {rowInsights
-                              ? `${formatLatency(rowInsights.latency_avg_ms)} • Uptime ${formatPercent(rowInsights.uptime_percent)}`
-                              : 'Calcul des stats…'}
+                              ? `${formatLatency(rowInsights.latency_avg_ms)} • ${t('insights.cards.uptime')} ${formatPercent(rowInsights.uptime_percent)}`
+                              : t('dashboard.metricsLoading')}
                           </p>
                         </td>
                         <td className="px-6 py-4 text-slate-500 font-mono text-xs">{target.frequency}s</td>
@@ -601,13 +607,13 @@ function App() {
               className="mb-6 flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors w-fit group"
             >
               <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-              <span className="text-sm font-medium">Retour à la liste</span>
+              <span className="text-sm font-medium">{t('create.back')}</span>
             </button>
             <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8">
-              <h2 className="text-xl font-semibold text-slate-800 mb-6">Nouvelle surveillance</h2>
+              <h2 className="text-xl font-semibold text-slate-800 mb-6">{t('create.title')}</h2>
               <form onSubmit={handleCreateSubmit} className="space-y-6">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Adresse IP ou Nom de domaine</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">{t('create.addressLabel')}</label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <Globe className="w-4 h-4 text-slate-400" />
@@ -615,7 +621,7 @@ function App() {
                     <input
                       type="text"
                       className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-slate-200 focus:border-slate-400 outline-none transition-all"
-                      placeholder="ex: 8.8.8.8"
+                      placeholder={t('create.addressPlaceholder')}
                       value={form.ip}
                       onChange={(event) => setForm((prev) => ({ ...prev, ip: event.target.value }))}
                       required
@@ -623,7 +629,7 @@ function App() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Fréquence de ping (secondes)</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">{t('create.frequencyLabel')}</label>
                   <div className="flex items-center gap-4">
                     <input
                       type="range"
@@ -644,14 +650,14 @@ function App() {
                     onClick={() => setView('dashboard')}
                     className="flex-1 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50 font-medium text-sm transition-colors"
                   >
-                    Annuler
+                    {t('create.cancel')}
                   </button>
                   <button
                     type="submit"
                     disabled={isSubmitting}
                     className="flex-1 px-4 py-2.5 bg-slate-800 text-white rounded-md hover:bg-slate-700 font-medium text-sm shadow-sm transition-all disabled:opacity-60"
                   >
-                    {isSubmitting ? 'En cours…' : 'Démarrer'}
+                    {isSubmitting ? t('create.submitting') : t('create.submit')}
                   </button>
                 </div>
               </form>
@@ -677,15 +683,19 @@ function App() {
                   <h2 className="text-2xl font-bold text-slate-800">{currentTarget.ip}</h2>
                   <div className="flex items-center gap-2 text-sm text-slate-500">
                     <span className="font-mono">ID: {currentTarget.id}</span> &bull;
-                    <span>Freq: {currentTarget.frequency}s</span>
+                    <span>
+                      {t('details.freqLabel')} {currentTarget.frequency}s
+                    </span>
                     <span className="hidden sm:inline">&bull;</span>
-                    <span>Lancé le {new Date(currentTarget.created_at).toLocaleString()}</span>
+                    <span>
+                      {t('details.startedAt')} {new Date(currentTarget.created_at).toLocaleString()}
+                    </span>
                   </div>
                 </div>
                 <span
                   className={`ml-2 px-2.5 py-0.5 rounded text-xs font-semibold border uppercase tracking-wide ${currentTarget.is_active ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
                 >
-                  {currentTarget.is_active ? 'SURVEILLANCE ACTIVE' : 'EN PAUSE'}
+                  {currentTarget.is_active ? t('details.badgeActive') : t('details.badgePaused')}
                 </span>
               </div>
               <div className="flex gap-2">
@@ -696,7 +706,7 @@ function App() {
                   className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-300 hover:bg-slate-50 rounded-md text-sm font-medium text-slate-700 transition-colors disabled:opacity-60"
                 >
                   {currentTarget.is_active ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  {currentTarget.is_active ? 'Pause' : 'Reprendre'}
+                  {currentTarget.is_active ? t('details.pause') : t('details.resume')}
                 </button>
                 <button
                   type="button"
@@ -720,9 +730,9 @@ function App() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                   <div>
                     <h3 className="font-semibold text-slate-700 flex items-center gap-2">
-                      <Activity className="w-4 h-4" /> Analytique de latence
+                      <Activity className="w-4 h-4" /> {t('charts.latencyTitle')}
                     </h3>
-                    <p className="text-xs text-slate-500">Fenêtre {windowLabel} • {sampleSummary}</p>
+                    <p className="text-xs text-slate-500">{t('charts.latencySubtitle', { window: windowLabel, samples: sampleSummary })}</p>
                   </div>
                   <div className="flex items-center gap-2 bg-slate-100 rounded-full p-1">
                     {WINDOW_PRESETS.map((preset) => (
@@ -745,10 +755,10 @@ function App() {
               <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col h-[350px] lg:h-auto">
                 <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
                   <div>
-                    <h3 className="font-semibold text-slate-700 text-sm">Derniers Échantillons</h3>
-                    <p className="text-xs text-slate-400">{logs.length} entrées</p>
+                    <h3 className="font-semibold text-slate-700 text-sm">{t('details.logsTitle')}</h3>
+                    <p className="text-xs text-slate-400">{t('details.logsEntries', { count: logs.length })}</p>
                   </div>
-                  <span className="text-xs text-slate-400 bg-white px-2 py-1 rounded-full border border-slate-200">RAW</span>
+                  <span className="text-xs text-slate-400 bg-white px-2 py-1 rounded-full border border-slate-200">{t('details.rawTag')}</span>
                 </div>
                 <LogsTable logs={reversedLogs} />
               </div>
@@ -757,17 +767,17 @@ function App() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-700 text-sm">Perte & disponibilité</h3>
-                  <span className="text-xs text-slate-400">Mise à jour continue</span>
+                  <h3 className="font-semibold text-slate-700 text-sm">{t('details.lossTitle')}</h3>
+                  <span className="text-xs text-slate-400">{t('details.lossSubtitle')}</span>
                 </div>
                 <LossTimelineChart data={timelineData} isLoading={isInsightsLoading} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 text-sm">
                   <div>
-                    <p className="text-xs uppercase text-slate-400">Fenêtre analysée</p>
+                    <p className="text-xs uppercase text-slate-400">{t('details.windowAnalyzed')}</p>
                     <p className="font-mono text-slate-700">{formatWindowRange(currentInsights)}</p>
                   </div>
                   <div>
-                    <p className="text-xs uppercase text-slate-400">Échantillons</p>
+                    <p className="text-xs uppercase text-slate-400">{t('details.samplesLabel')}</p>
                     <p className="font-semibold text-slate-700">{sampleSummary}</p>
                   </div>
                 </div>

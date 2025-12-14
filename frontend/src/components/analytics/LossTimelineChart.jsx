@@ -1,12 +1,14 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts'
 import ChartPlaceholder from '../common/ChartPlaceholder'
+import { useTranslation } from '../../i18n/LanguageProvider'
 
 function LossTimelineChart({ data, isLoading }) {
+  const { t } = useTranslation()
   if (isLoading) {
-    return <ChartPlaceholder message="Mise à jour…" heightClass="h-56" />
+    return <ChartPlaceholder message={t('placeholders.lossLoading')} heightClass="h-56" />
   }
   if (!data.length) {
-    return <ChartPlaceholder message="Aucune perte mesurée" heightClass="h-56" />
+    return <ChartPlaceholder message={t('placeholders.lossEmpty')} heightClass="h-56" />
   }
   return (
     <div className="h-56">
@@ -18,11 +20,16 @@ function LossTimelineChart({ data, isLoading }) {
           <RechartsTooltip
             formatter={(value) => [
               `${typeof value === 'number' ? value.toFixed(1) : value} %`,
-              'Perte',
+              t('timeline.loss'),
             ]}
             labelFormatter={(label, payload) => payload?.[0]?.payload.fullLabel ?? label}
           />
-          <Bar dataKey="lossRatePct" name="Perte (%)" fill="#fb923c" radius={[4, 4, 0, 0]} />
+          <Bar
+            dataKey="lossRatePct"
+            name={`${t('timeline.loss')} (%)`}
+            fill="#fb923c"
+            radius={[4, 4, 0, 0]}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>
