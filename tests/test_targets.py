@@ -3,8 +3,8 @@ import asyncio
 from datetime import datetime, timezone
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_pingmedaddy.db"
-os.environ["ADMIN_USERNAME"] = "tester"
-os.environ["ADMIN_PASSWORD"] = "secret"
+os.environ["ADMIN_USERNAME"] = "admin"
+os.environ["ADMIN_PASSWORD"] = "changeme"
 os.environ["AUTH_SECRET"] = "test-secret"
 os.environ["CORS_ORIGINS"] = "http://test"
 
@@ -60,7 +60,7 @@ async def test_create_pause_resume_flow(monkeypatch):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         login_resp = await client.post(
             "/auth/login",
-            json={"username": "tester", "password": "secret"},
+            json={"username": os.environ["ADMIN_USERNAME"], "password": os.environ["ADMIN_PASSWORD"]},
         )
         assert login_resp.status_code == 200
         token = login_resp.json()["access_token"]
@@ -116,6 +116,33 @@ async def test_create_pause_resume_flow(monkeypatch):
         csv_body = resp.text.strip().splitlines()
         assert csv_body[0].startswith("time,target_id,target_ip")
         assert len(csv_body) >= 2
+
+        resp = await client.get("/targets/import/template", headers=headers)
+        assert resp.status_code == 200
+        template_lines = resp.text.strip().splitlines()
+        assert template_lines[0] == "ip,frequency,url,notes,is_active"
+
+        csv_payload = """ip,frequency,url,notes,is_active
+10.0.0.1,5,https://edge.local,Edge router,true
+192.168.1.254,5,,,false
+"""
+        resp = await client.post(
+            "/targets/import",
+            headers=headers,
+            files={"file": ("targets.csv", csv_payload, "text/csv")},
+        )
+        assert resp.status_code == 200
+        import_result = resp.json()
+        assert import_result["created"] == 1
+        assert import_result["skipped_existing"] == 1
+        assert import_result["row_count"] == 2
+        assert import_result["errors"] == []
+
+        resp = await client.get("/targets/export", headers=headers)
+        assert resp.status_code == 200
+        export_lines = resp.text.strip().splitlines()
+        assert export_lines[0] == "ip,frequency,url,notes,is_active"
+        assert any(line.startswith("10.0.0.1,5") for line in export_lines[1:])
 
         resp = await client.get(f"/targets/{target_id}/events", headers=headers)
         assert resp.status_code == 200

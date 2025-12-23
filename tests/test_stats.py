@@ -43,11 +43,14 @@ async def test_insights_focus_on_recent_window():
         await session.refresh(target)
 
         now = datetime.now(timezone.utc)
+        recent_start = now - timedelta(hours=24)
+
         old_start = now - timedelta(days=900)
+        old_end = recent_start - timedelta(hours=6)
         old_rows = []
         timestamp = old_start
         old_interval = timedelta(hours=6)
-        for _ in range(900 * 4):
+        while timestamp < old_end:
             old_rows.append(
                 {
                     "time": timestamp,
@@ -61,7 +64,6 @@ async def test_insights_focus_on_recent_window():
         await session.execute(insert(PingLog), old_rows)
         await session.commit()
 
-        recent_start = now - timedelta(hours=24)
         interval = timedelta(minutes=15)
         recent_rows = []
         recent_latencies = []
@@ -89,6 +91,8 @@ async def test_insights_focus_on_recent_window():
             window_minutes=24 * 60,
             bucket_seconds=900,
             max_samples=10_000,
+            window_start=recent_start,
+            window_end=now,
         )
 
     assert insights is not None
@@ -108,4 +112,73 @@ async def test_insights_focus_on_recent_window():
     assert timeline[-1]["sample_count"] == 1
     assert timeline[0]["min_latency_ms"] == pytest.approx(recent_latencies[0], rel=1e-6)
     assert timeline[-1]["max_latency_ms"] == pytest.approx(recent_latencies[-1], rel=1e-6)
-*** End Patch
+
+
+@pytest.mark.asyncio
+async def test_insights_accepts_explicit_range():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with AsyncSessionLocal() as session:
+        target = MonitorTarget(ip_address="198.18.0.1", frequency=60)
+        session.add(target)
+        await session.commit()
+        await session.refresh(target)
+
+        now = datetime.now(timezone.utc)
+        rows = [
+            {
+                "time": now - timedelta(days=5),
+                "target_id": target.id,
+                "latency_ms": 99.0,
+                "hops": 8,
+                "packet_loss": False,
+            },
+            {
+                "time": now - timedelta(days=3, hours=3),
+                "target_id": target.id,
+                "latency_ms": 42.0,
+                "hops": 5,
+                "packet_loss": False,
+            },
+            {
+                "time": now - timedelta(days=2, hours=12),
+                "target_id": target.id,
+                "latency_ms": None,
+                "hops": None,
+                "packet_loss": True,
+            },
+            {
+                "time": now - timedelta(hours=3),
+                "target_id": target.id,
+                "latency_ms": 12.0,
+                "hops": 4,
+                "packet_loss": False,
+            },
+        ]
+        await session.execute(insert(PingLog), rows)
+        await session.commit()
+
+    range_start = now - timedelta(days=4)
+    range_end = now - timedelta(days=1)
+
+    async with AsyncSessionLocal() as session:
+        insights = await compute_target_insights(
+            session,
+            target.id,
+            window_start=range_start,
+            window_end=range_end,
+            bucket_seconds=3600,
+            max_samples=5000,
+        )
+
+    assert insights is not None
+    assert insights["sample_count"] == 2
+    assert insights["loss_count"] == 1
+    assert insights["window_start"] == range_start
+    assert insights["window_end"] == range_end
+    assert insights["window_minutes"] == int((range_end - range_start).total_seconds() // 60)
+    assert len(insights["timeline"]) == 2
+    assert all(point["bucket"] >= range_start for point in insights["timeline"])
+    assert all(point["bucket"] <= range_end for point in insights["timeline"])

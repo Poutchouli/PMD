@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  FileSpreadsheet,
   Globe,
   LogOut,
   NotebookPen,
@@ -14,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Server,
+  Upload,
   Trash2,
   X,
 } from 'lucide-react'
@@ -22,6 +24,7 @@ import StatsCard from './components/analytics/StatsCard'
 import LatencyTimelineChart from './components/analytics/LatencyTimelineChart'
 import LossTimelineChart from './components/analytics/LossTimelineChart'
 import LogsTable from './components/logs/LogsTable'
+import EventLog from './components/logs/EventLog'
 import TraceroutePanel from './components/network/TraceroutePanel'
 import LanguageSelector from './components/common/LanguageSelector'
 import { useTranslation } from './i18n/LanguageProvider'
@@ -70,9 +73,24 @@ function App() {
   const [metadataDraft, setMetadataDraft] = useState({ url: '', notes: '' })
   const [isSavingMetadata, setIsSavingMetadata] = useState(false)
   const [metadataFeedback, setMetadataFeedback] = useState('')
+  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false)
+  const [isDownloadingTargetsCsv, setIsDownloadingTargetsCsv] = useState(false)
+  const [isImportingTargets, setIsImportingTargets] = useState(false)
+  const [importFeedback, setImportFeedback] = useState('')
+  const [importErrors, setImportErrors] = useState([])
+  const [importError, setImportError] = useState('')
+  const [importFilename, setImportFilename] = useState('')
+  const [events, setEvents] = useState([])
+  const [isEventsLoading, setIsEventsLoading] = useState(false)
+  const [eventsError, setEventsError] = useState('')
+  const [customRange, setCustomRange] = useState(null)
+  const [rangeStart, setRangeStart] = useState('')
+  const [rangeEnd, setRangeEnd] = useState('')
+  const [rangeError, setRangeError] = useState('')
   const insightsMapRef = useRef({})
   const insightFreshnessRef = useRef({})
   const lastDashboardInsightsRef = useRef(0)
+  const importFileRef = useRef(null)
   const isAuthenticated = Boolean(token)
 
   const currentTarget = useMemo(
@@ -81,7 +99,12 @@ function App() {
   )
   const currentInsights = useMemo(() => (selectedId ? insightsMap[selectedId] ?? null : null), [insightsMap, selectedId])
   const timelineData = useMemo(() => buildTimelineData(currentInsights), [currentInsights])
-  const windowLabel = useMemo(() => formatWindowLabel(insightWindow), [insightWindow])
+  const windowLabel = useMemo(() => {
+    if (customRange && currentInsights) {
+      return formatWindowRange(currentInsights)
+    }
+    return formatWindowLabel(insightWindow)
+  }, [customRange, currentInsights, insightWindow])
   const reversedLogs = useMemo(() => [...logs].reverse(), [logs])
   const lastHop = useMemo(() => {
     const latest = reversedLogs.find((log) => !log.packet_loss && typeof log.hops === 'number')
@@ -172,6 +195,13 @@ function App() {
       setExportError('')
       setMetadataDraft({ url: '', notes: '' })
       setMetadataFeedback('')
+      setEvents([])
+      setEventsError('')
+      setIsEventsLoading(false)
+      setCustomRange(null)
+      setRangeStart('')
+      setRangeEnd('')
+      setRangeError('')
       if (message) {
         setError(message)
       }
@@ -258,9 +288,13 @@ function App() {
   }, [logout, t, token])
 
   const fetchInsights = useCallback(
-    async (targetId, { windowMinutes = 60, bucketSeconds = 60 } = {}) => {
+    async (targetId, { windowMinutes = 60, bucketSeconds = 60, start, end } = {}) => {
       const params = new URLSearchParams()
-      params.set('window_minutes', String(windowMinutes))
+      if (start) params.set('start', start)
+      if (end) params.set('end', end)
+      if (!start || !end) {
+        params.set('window_minutes', String(windowMinutes))
+      }
       params.set('bucket_seconds', String(bucketSeconds))
       return apiCall(`/targets/${targetId}/insights?${params.toString()}`)
     },
@@ -271,8 +305,9 @@ function App() {
     async (targetId, options = {}, force = false) => {
       const now = Date.now()
       const last = insightFreshnessRef.current[targetId] ?? 0
-      const freshnessWindow = force ? 0 : DETAIL_INSIGHTS_REFRESH_MS
-      if (!force && now - last < freshnessWindow && insightsMapRef.current[targetId]) {
+      const isRangeQuery = Boolean(options.start || options.end)
+      const freshnessWindow = force || isRangeQuery ? 0 : DETAIL_INSIGHTS_REFRESH_MS
+      if (!force && !isRangeQuery && now - last < freshnessWindow && insightsMapRef.current[targetId]) {
         return insightsMapRef.current[targetId]
       }
       const data = await fetchInsights(targetId, options)
@@ -281,6 +316,27 @@ function App() {
       return data
     },
     [fetchInsights, updateInsightsState],
+  )
+
+  const loadEvents = useCallback(
+    async (id, { start, end } = {}) => {
+      if (!id || !token) return
+      setIsEventsLoading(true)
+      setEventsError('')
+      setEvents([])
+      try {
+        const params = new URLSearchParams()
+        if (start) params.set('start', start)
+        if (end) params.set('end', end)
+        const response = await apiCall(`/targets/${id}/events?${params.toString()}`)
+        setEvents(response)
+      } catch (err) {
+        setEventsError(t('history.eventsError'))
+      } finally {
+        setIsEventsLoading(false)
+      }
+    },
+    [apiCall, t, token],
   )
 
   const refreshDashboardInsights = useCallback(
@@ -303,29 +359,43 @@ function App() {
   )
 
   const refreshSelectedInsights = useCallback(
-    async (force = false, customWindowMinutes, explicitTargetId, { showSpinner = true } = {}) => {
+    async ({ force = false, windowMinutes: overrideWindow, targetId: explicitTargetId, customRange: rangeOverride, showSpinner = true } = {}) => {
       const targetId = explicitTargetId ?? selectedId
       if (!targetId) return null
-      const minutes = customWindowMinutes ?? insightWindow
+      const range = rangeOverride ?? customRange
+      const computedMinutes = range
+        ? Math.max(
+            1,
+            Math.round((new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000),
+          )
+        : overrideWindow ?? insightWindow
+      if (computedMinutes <= 0) return null
       if (showSpinner) {
         setIsInsightsLoading(true)
       }
       try {
-        return await updateInsights(
-          targetId,
-          {
-            windowMinutes: minutes,
-            bucketSeconds: bucketSecondsForWindow(minutes),
-          },
-          force,
-        )
+        const requestParams = range
+          ? {
+              start: range.start,
+              end: range.end,
+              bucketSeconds: bucketSecondsForWindow(computedMinutes),
+            }
+          : {
+              windowMinutes: computedMinutes,
+              bucketSeconds: bucketSecondsForWindow(computedMinutes),
+            }
+        const data = await updateInsights(targetId, requestParams, force || Boolean(range))
+        if (data?.window_start && data?.window_end) {
+          await loadEvents(targetId, { start: data.window_start, end: data.window_end })
+        }
+        return data
       } finally {
         if (showSpinner) {
           setIsInsightsLoading(false)
         }
       }
     },
-    [insightWindow, selectedId, updateInsights],
+    [customRange, insightWindow, loadEvents, selectedId, updateInsights],
   )
 
   const loadTargets = useCallback(async () => {
@@ -359,7 +429,7 @@ function App() {
     if (!token) return
     if (view === 'details' && selectedId) {
       await loadLogs(selectedId)
-      await refreshSelectedInsights(true)
+      await refreshSelectedInsights({ force: true })
     } else {
       await loadTargets()
     }
@@ -380,22 +450,22 @@ function App() {
   useEffect(() => {
     if (!token) return
     if (view === 'details' && selectedId) {
-      refreshSelectedInsights(true)
+      refreshSelectedInsights({ force: true })
     }
   }, [refreshSelectedInsights, selectedId, token, view])
 
   useEffect(() => {
     if (!token) return undefined
     const interval = setInterval(() => {
-      if (view === 'details' && selectedId) {
+      if (view === 'details' && selectedId && !customRange) {
         loadLogs(selectedId)
-        refreshSelectedInsights(false, undefined, undefined, { showSpinner: false })
+        refreshSelectedInsights({ force: false, showSpinner: false })
       } else if (view === 'dashboard') {
         loadTargets()
       }
     }, POLL_INTERVAL)
     return () => clearInterval(interval)
-  }, [loadLogs, loadTargets, refreshSelectedInsights, selectedId, token, view])
+  }, [customRange, loadLogs, loadTargets, refreshSelectedInsights, selectedId, token, view])
 
   const handleCreateSubmit = async (event) => {
     event.preventDefault()
@@ -457,9 +527,48 @@ function App() {
     setView('details')
     setTraceResult(null)
     setTraceError('')
+    setCustomRange(null)
+    setRangeStart('')
+    setRangeEnd('')
+    setRangeError('')
+    setEvents([])
     loadLogs(id)
-    refreshSelectedInsights(true, undefined, id)
+    refreshSelectedInsights({ force: true, targetId: id })
   }
+
+  const applyCustomRange = useCallback(async () => {
+    if (!selectedId) return
+    if (!rangeStart || !rangeEnd) {
+      setRangeError(t('history.rangeMissing'))
+      return
+    }
+
+    const startDate = new Date(rangeStart)
+    const endDate = new Date(rangeEnd)
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate >= endDate) {
+      setRangeError(t('history.rangeInvalid'))
+      return
+    }
+
+    setRangeError('')
+    const payload = {
+      start: startDate.toISOString(),
+      end: endDate.toISOString(),
+    }
+    const minutes = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 60000))
+    setCustomRange(payload)
+    setInsightWindow(minutes)
+    await refreshSelectedInsights({ force: true, customRange: payload })
+  }, [rangeEnd, rangeStart, refreshSelectedInsights, selectedId, t])
+
+  const clearCustomRange = useCallback(async () => {
+    setCustomRange(null)
+    setRangeStart('')
+    setRangeEnd('')
+    setRangeError('')
+    setInsightWindow(60)
+    await refreshSelectedInsights({ force: true })
+  }, [refreshSelectedInsights])
 
   const toggleCurrentTarget = async () => {
     if (!currentTarget) return
@@ -469,7 +578,7 @@ function App() {
       await apiCall(`/targets/${currentTarget.id}/${action}`, { method: 'POST' })
       await loadTargets()
       await loadLogs(currentTarget.id)
-      await refreshSelectedInsights(true, undefined, currentTarget.id)
+      await refreshSelectedInsights({ force: true, targetId: currentTarget.id })
     } catch (err) {
       // handled upstream
     } finally {
@@ -555,6 +664,114 @@ function App() {
       setIsExporting(false)
     }
   }, [currentTarget, logout, t, token])
+
+  const downloadCsvFile = useCallback(
+    async (endpoint, filename, setLoading) => {
+      if (!token) return
+      setLoading(true)
+      try {
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
+        if (response.status === 401) {
+          logout(t('alerts.sessionExpired'))
+          throw new Error(t('alerts.sessionExpired'))
+        }
+        if (!response.ok) {
+          let detail
+          try {
+            const data = await response.json()
+            detail = data?.detail
+          } catch (err) {
+            console.error(err)
+          }
+          throw new Error(detail ?? `HTTP ${response.status}`)
+        }
+        const blob = await response.blob()
+        const downloadUrl = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = downloadUrl
+        link.download = filename
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.URL.revokeObjectURL(downloadUrl)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [logout, t, token],
+  )
+
+  const handleDownloadTemplate = useCallback(async () => {
+    try {
+      await downloadCsvFile('/targets/import/template', 'pingmedaddy-targets-template.csv', setIsDownloadingTemplate)
+    } catch (err) {
+      setImportError(err?.message ?? t('create.import.error'))
+    }
+  }, [downloadCsvFile, t])
+
+  const handleDownloadTargetsCsv = useCallback(async () => {
+    try {
+      await downloadCsvFile('/targets/export', 'pingmedaddy-targets.csv', setIsDownloadingTargetsCsv)
+    } catch (err) {
+      setImportError(err?.message ?? t('create.import.error'))
+    }
+  }, [downloadCsvFile, t])
+
+  const handleImportCsv = useCallback(async () => {
+    if (!importFileRef.current?.files?.length) {
+      setImportFeedback('')
+      setImportErrors([])
+      setImportError(t('create.import.noFile'))
+      return
+    }
+    const file = importFileRef.current.files[0]
+    setIsImportingTargets(true)
+    setImportFeedback('')
+    setImportErrors([])
+    setImportError('')
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const response = await fetch(`${API_BASE_URL}/targets/import`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      })
+      if (response.status === 401) {
+        logout(t('alerts.sessionExpired'))
+        throw new Error(t('alerts.sessionExpired'))
+      }
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(payload?.detail ?? `HTTP ${response.status}`)
+      }
+      setImportFeedback(
+        t('create.import.result', {
+          created: payload?.created ?? 0,
+          skipped: payload?.skipped_existing ?? 0,
+          errors: payload?.errors?.length ?? 0,
+        }),
+      )
+      if (Array.isArray(payload?.errors)) {
+        setImportErrors(payload.errors)
+      }
+      await loadTargets()
+    } catch (err) {
+      setImportError(err?.message ?? t('create.import.error'))
+    } finally {
+      if (importFileRef.current) {
+        importFileRef.current.value = ''
+      }
+      setImportFilename('')
+      setIsImportingTargets(false)
+    }
+  }, [loadTargets, logout, t, token])
 
   if (!isAuthenticated) {
     return (
@@ -818,6 +1035,79 @@ function App() {
                 </div>
               </form>
             </div>
+
+            <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mt-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 text-slate-800 font-semibold">
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>{t('create.import.title')}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">{t('create.import.subtitle')}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadTemplate}
+                    disabled={isDownloadingTemplate}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded-md hover:bg-slate-50 transition disabled:opacity-60"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    {isDownloadingTemplate ? t('create.import.downloading') : t('create.import.template')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadTargetsCsv}
+                    disabled={isDownloadingTargetsCsv}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition disabled:opacity-60"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    {isDownloadingTargetsCsv ? t('create.import.downloading') : t('create.import.current')}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] items-center">
+                <label className="flex items-center gap-3 border border-dashed border-slate-300 rounded-md px-4 py-3 bg-slate-50 hover:border-slate-400 cursor-pointer">
+                  <input
+                    ref={importFileRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="sr-only"
+                    onChange={(event) => {
+                      setImportFilename(event.target.files?.[0]?.name ?? '')
+                      setImportFeedback('')
+                      setImportErrors([])
+                      setImportError('')
+                    }}
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold text-slate-700">{importFilename || t('create.import.placeholder')}</span>
+                    <span className="text-xs text-slate-500">{t('create.import.hint')}</span>
+                  </div>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleImportCsv}
+                  disabled={isImportingTargets}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold text-white bg-slate-800 hover:bg-slate-700 disabled:opacity-60"
+                >
+                  <Upload className="w-4 h-4" />
+                  {isImportingTargets ? t('create.import.uploading') : t('create.import.cta')}
+                </button>
+              </div>
+              {importFeedback && <p className="text-sm text-emerald-700 mt-3">{importFeedback}</p>}
+              {importError && <p className="text-sm text-red-600 mt-2">{importError}</p>}
+              {importErrors.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs font-semibold text-red-600">{t('create.import.errorsTitle')}</p>
+                  <ul className="mt-1 space-y-1 text-xs text-red-700 list-disc list-inside">
+                    {importErrors.map((err) => (
+                      <li key={err}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           </section>
         )}
 
@@ -955,8 +1245,16 @@ function App() {
                         key={preset.value}
                         type="button"
                         onClick={() => {
+                          setCustomRange(null)
+                          setRangeError('')
+                          setRangeStart('')
+                          setRangeEnd('')
                           setInsightWindow(preset.value)
-                          refreshSelectedInsights(true, preset.value)
+                          refreshSelectedInsights({
+                            force: true,
+                            windowMinutes: preset.value,
+                            customRange: null,
+                          })
                         }}
                         className={`px-3 py-1.5 text-xs font-semibold rounded-full transition ${insightWindow === preset.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
                       >
@@ -965,33 +1263,93 @@ function App() {
                     ))}
                   </div>
                 </div>
+                <div className="flex flex-col gap-2 mb-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center gap-2">
+                    <div className="flex flex-1 gap-2">
+                      <input
+                        type="datetime-local"
+                        value={rangeStart}
+                        onChange={(event) => {
+                          setRangeStart(event.target.value)
+                          setRangeError('')
+                        }}
+                        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
+                        aria-label={t('history.rangeStart')}
+                      />
+                      <input
+                        type="datetime-local"
+                        value={rangeEnd}
+                        onChange={(event) => {
+                          setRangeEnd(event.target.value)
+                          setRangeError('')
+                        }}
+                        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
+                        aria-label={t('history.rangeEnd')}
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={applyCustomRange}
+                        className="px-3 py-2 rounded-md text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition disabled:opacity-60"
+                        disabled={isInsightsLoading}
+                      >
+                        {t('history.applyRange')}
+                      </button>
+                      {customRange && (
+                        <button
+                          type="button"
+                          onClick={clearCustomRange}
+                          className="px-3 py-2 rounded-md text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition"
+                        >
+                          {t('history.resetRange')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {rangeError && <p className="text-xs text-red-500">{rangeError}</p>}
+                  {!rangeError && customRange && (
+                    <p className="text-xs text-emerald-700">
+                      {t('history.rangeActive', { range: windowLabel })}
+                    </p>
+                  )}
+                </div>
                 <LatencyTimelineChart data={timelineData} isLoading={isInsightsLoading} />
               </div>
-              <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col h-[350px] lg:h-auto">
-                <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold text-slate-700 text-sm">{t('details.logsTitle')}</h3>
-                    <p className="text-xs text-slate-400">{t('details.logsEntries', { count: logs.length })}</p>
+              <div className="flex flex-col gap-4">
+                <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col h-[350px] lg:h-auto">
+                  <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-slate-700 text-sm">{t('details.logsTitle')}</h3>
+                      <p className="text-xs text-slate-400">{t('details.logsEntries', { count: logs.length })}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-400 bg-white px-2 py-1 rounded-full border border-slate-200">
+                        {t('details.rawTag')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleExportLogs}
+                        disabled={isExporting}
+                        className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-full hover:bg-slate-100 transition disabled:opacity-60"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        {isExporting ? t('details.exporting') : t('details.export')}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-400 bg-white px-2 py-1 rounded-full border border-slate-200">
-                      {t('details.rawTag')}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleExportLogs}
-                      disabled={isExporting}
-                      className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-full hover:bg-slate-100 transition disabled:opacity-60"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      {isExporting ? t('details.exporting') : t('details.export')}
-                    </button>
-                  </div>
+                  {exportError && (
+                    <p className="px-5 pt-2 text-xs text-red-500">{exportError}</p>
+                  )}
+                  <LogsTable logs={reversedLogs} />
                 </div>
-                {exportError && (
-                  <p className="px-5 pt-2 text-xs text-red-500">{exportError}</p>
-                )}
-                <LogsTable logs={reversedLogs} />
+
+                <EventLog
+                  events={events}
+                  isLoading={isEventsLoading}
+                  error={eventsError}
+                  rangeLabel={currentInsights ? formatWindowRange(currentInsights) : ''}
+                />
               </div>
             </div>
 

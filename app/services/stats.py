@@ -12,7 +12,8 @@ from app.models import MonitorTarget, PingLog
 
 DEFAULT_WINDOW_MINUTES = 60
 DEFAULT_BUCKET_SECONDS = 60
-MAX_SAMPLES = 5000
+# Higher cap to support multi-day windows without dropping samples too early.
+MAX_SAMPLES = 20000
 
 
 def _floor_to_bucket(timestamp: datetime, bucket_seconds: int) -> datetime:
@@ -63,6 +64,12 @@ class TimelineBucket:
         return self.loss_count / self.sample_count
 
 
+def _ensure_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 async def compute_target_insights(
     db: AsyncSession,
     target_id: int,
@@ -70,6 +77,8 @@ async def compute_target_insights(
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
     bucket_seconds: int = DEFAULT_BUCKET_SECONDS,
     max_samples: int = MAX_SAMPLES,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
 ):
     target = await db.get(MonitorTarget, target_id)
     if not target:
@@ -79,13 +88,20 @@ async def compute_target_insights(
     bucket_seconds = max(10, bucket_seconds)
     max_samples = max(100, max_samples)
 
-    window_end = datetime.now(timezone.utc)
-    window_start = window_end - timedelta(minutes=window_minutes)
+    resolved_end = _ensure_aware(window_end) if window_end else datetime.now(timezone.utc)
+    resolved_start = _ensure_aware(window_start) if window_start else resolved_end - timedelta(minutes=window_minutes)
+    if resolved_start >= resolved_end:
+        raise ValueError("window_start must be before window_end")
+
+    window_start = resolved_start
+    window_end = resolved_end
+    window_minutes = max(1, int((window_end - window_start).total_seconds() // 60))
 
     stmt = (
         select(PingLog)
         .where(PingLog.target_id == target_id)
         .where(PingLog.time >= window_start)
+        .where(PingLog.time <= window_end)
         .order_by(PingLog.time.desc())
         .limit(max_samples)
     )
