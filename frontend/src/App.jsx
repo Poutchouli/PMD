@@ -9,39 +9,22 @@ import {
   FileSpreadsheet,
   Globe,
   LogOut,
-  NotebookPen,
-  Pause,
-  Play,
   Plus,
   RefreshCw,
   Server,
   Upload,
-  Trash2,
   X,
 } from 'lucide-react'
 import LoginScreen from './components/auth/LoginScreen'
-import StatsCard from './components/analytics/StatsCard'
-import LatencyTimelineChart from './components/analytics/LatencyTimelineChart'
-import LossTimelineChart from './components/analytics/LossTimelineChart'
-import LogsTable from './components/logs/LogsTable'
-import EventLog from './components/logs/EventLog'
-import TraceroutePanel from './components/network/TraceroutePanel'
 import LanguageSelector from './components/common/LanguageSelector'
+import TargetDetailsPage from './components/details/TargetDetailsPage'
 import { useTranslation } from './i18n/LanguageProvider'
-import { formatLatency, formatPercent, formatWindowLabel, formatWindowRange } from './utils/formatters'
-import { buildTimelineData, bucketSecondsForWindow } from './utils/insights'
+import { formatLatency, formatPercent } from './utils/formatters'
+import { bucketSecondsForWindow } from './utils/insights'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:6666'
 const POLL_INTERVAL = 3000
-const LOG_LIMIT = 50
 const DASHBOARD_INSIGHTS_REFRESH_MS = 60_000
-const DETAIL_INSIGHTS_REFRESH_MS = 15_000
-const WINDOW_PRESETS = [
-  { label: '15 min', value: 15 },
-  { label: '1 h', value: 60 },
-  { label: '4 h', value: 240 },
-  { label: '24 h', value: 1440 },
-]
 
 const createEmptyTargetForm = () => ({ ip: '', frequency: 5, url: '', notes: '' })
 
@@ -50,7 +33,6 @@ function App() {
   const [view, setView] = useState('dashboard')
   const [targets, setTargets] = useState([])
   const [selectedId, setSelectedId] = useState(null)
-  const [logs, setLogs] = useState([])
   const [form, setForm] = useState(() => createEmptyTargetForm())
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -63,16 +45,6 @@ function App() {
   const [loginError, setLoginError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [insightsMap, setInsightsMap] = useState({})
-  const [isInsightsLoading, setIsInsightsLoading] = useState(false)
-  const [insightWindow, setInsightWindow] = useState(60)
-  const [traceResult, setTraceResult] = useState(null)
-  const [traceError, setTraceError] = useState('')
-  const [isTracing, setIsTracing] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
-  const [exportError, setExportError] = useState('')
-  const [metadataDraft, setMetadataDraft] = useState({ url: '', notes: '' })
-  const [isSavingMetadata, setIsSavingMetadata] = useState(false)
-  const [metadataFeedback, setMetadataFeedback] = useState('')
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false)
   const [isDownloadingTargetsCsv, setIsDownloadingTargetsCsv] = useState(false)
   const [isImportingTargets, setIsImportingTargets] = useState(false)
@@ -80,13 +52,8 @@ function App() {
   const [importErrors, setImportErrors] = useState([])
   const [importError, setImportError] = useState('')
   const [importFilename, setImportFilename] = useState('')
-  const [events, setEvents] = useState([])
-  const [isEventsLoading, setIsEventsLoading] = useState(false)
-  const [eventsError, setEventsError] = useState('')
-  const [customRange, setCustomRange] = useState(null)
-  const [rangeStart, setRangeStart] = useState('')
-  const [rangeEnd, setRangeEnd] = useState('')
-  const [rangeError, setRangeError] = useState('')
+  const [detailRefreshSignal, setDetailRefreshSignal] = useState(0)
+
   const insightsMapRef = useRef({})
   const insightFreshnessRef = useRef({})
   const lastDashboardInsightsRef = useRef(0)
@@ -97,84 +64,6 @@ function App() {
     () => targets.find((target) => target.id === selectedId) ?? null,
     [targets, selectedId],
   )
-  const currentInsights = useMemo(() => (selectedId ? insightsMap[selectedId] ?? null : null), [insightsMap, selectedId])
-  const timelineData = useMemo(() => buildTimelineData(currentInsights), [currentInsights])
-  const windowLabel = useMemo(() => {
-    if (customRange && currentInsights) {
-      return formatWindowRange(currentInsights)
-    }
-    return formatWindowLabel(insightWindow)
-  }, [customRange, currentInsights, insightWindow])
-  const reversedLogs = useMemo(() => [...logs].reverse(), [logs])
-  const lastHop = useMemo(() => {
-    const latest = reversedLogs.find((log) => !log.packet_loss && typeof log.hops === 'number')
-    return typeof latest?.hops === 'number' ? latest.hops : null
-  }, [reversedLogs])
-  const sampleSummary = useMemo(() => {
-    if (!currentInsights) return t('insights.waiting')
-    return t('insights.sampleCount', { count: currentInsights.sample_count ?? 0 })
-  }, [currentInsights, t])
-  const insightCards = useMemo(
-    () => [
-      {
-        label: t('insights.cards.uptime'),
-        value: formatPercent(currentInsights?.uptime_percent),
-        helper: currentInsights ? t('insights.lossCount', { count: currentInsights.loss_count ?? 0 }) : sampleSummary,
-        accent: currentInsights?.uptime_percent && currentInsights.uptime_percent < 95 ? 'text-amber-600' : 'text-emerald-600',
-      },
-      {
-        label: t('insights.cards.latencyAvg'),
-        value: formatLatency(currentInsights?.latency_avg_ms),
-        helper: t('insights.helpers.p50', { value: formatLatency(currentInsights?.latency_p50_ms) }),
-      },
-      {
-        label: t('insights.cards.latencyMin'),
-        value: formatLatency(currentInsights?.latency_min_ms),
-        helper: t('insights.helpers.max', { value: formatLatency(currentInsights?.latency_max_ms) }),
-      },
-      {
-        label: t('insights.cards.latencyP95'),
-        value: formatLatency(currentInsights?.latency_p95_ms),
-        helper: t('insights.helpers.p99', { value: formatLatency(currentInsights?.latency_p99_ms) }),
-      },
-      {
-        label: t('insights.cards.window'),
-        value: windowLabel,
-        helper: sampleSummary,
-      },
-      {
-        label: t('insights.cards.lastHop'),
-        value: typeof lastHop === 'number' ? lastHop : '--',
-        helper: t('insights.cards.lastHopHelper'),
-      },
-    ],
-    [currentInsights, lastHop, sampleSummary, t, windowLabel],
-  )
-  const metadataChanged = useMemo(() => {
-    if (!currentTarget) return false
-    const currentUrl = currentTarget.url ?? ''
-    const currentNotes = currentTarget.notes ?? ''
-    return currentUrl !== metadataDraft.url || currentNotes !== metadataDraft.notes
-  }, [currentTarget, metadataDraft])
-
-  useEffect(() => {
-    if (metadataChanged) {
-      setMetadataFeedback('')
-    }
-  }, [metadataChanged])
-
-  useEffect(() => {
-    if (currentTarget) {
-      setMetadataDraft({
-        url: currentTarget.url ?? '',
-        notes: currentTarget.notes ?? '',
-      })
-      setMetadataFeedback('')
-    } else {
-      setMetadataDraft({ url: '', notes: '' })
-    }
-    setExportError('')
-  }, [currentTarget])
 
   const logout = useCallback(
     (message) => {
@@ -185,37 +74,15 @@ function App() {
       setView('dashboard')
       setSelectedId(null)
       setTargets([])
-      setLogs([])
       setInsightsMap({})
       insightsMapRef.current = {}
       insightFreshnessRef.current = {}
-      setTraceResult(null)
-      setTraceError('')
-      setIsExporting(false)
-      setExportError('')
-      setMetadataDraft({ url: '', notes: '' })
-      setMetadataFeedback('')
-      setEvents([])
-      setEventsError('')
-      setIsEventsLoading(false)
-      setCustomRange(null)
-      setRangeStart('')
-      setRangeEnd('')
-      setRangeError('')
       if (message) {
         setError(message)
       }
     },
     [],
   )
-
-  const updateInsightsState = useCallback((targetId, data) => {
-    setInsightsMap((prev) => {
-      const next = { ...prev, [targetId]: data }
-      insightsMapRef.current = next
-      return next
-    })
-  }, [])
 
   const handleLoginSubmit = async (event) => {
     event.preventDefault()
@@ -250,51 +117,58 @@ function App() {
     }
   }
 
-  const apiCall = useCallback(async (endpoint, options = {}) => {
-    if (!token) {
-      throw new Error(t('auth.notAuthenticated'))
-    }
-    try {
-      const headers = new Headers(options.headers ?? {})
-      headers.set('Authorization', `Bearer ${token}`)
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers,
-      })
-      if (response.status === 401) {
-        logout(t('alerts.sessionExpired'))
-        throw new Error(t('alerts.sessionExpired'))
+  const apiCall = useCallback(
+    async (endpoint, options = {}) => {
+      if (!token) {
+        throw new Error(t('auth.notAuthenticated'))
       }
-      if (!response.ok) {
-        let detail
-        try {
-          const data = await response.json()
-          detail = data?.detail
-        } catch (err) {
-          console.error(err)
+      try {
+        const headers = new Headers(options.headers ?? {})
+        headers.set('Authorization', `Bearer ${token}`)
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+          ...options,
+          headers,
+        })
+        if (response.status === 401) {
+          logout(t('alerts.sessionExpired'))
+          throw new Error(t('alerts.sessionExpired'))
         }
-        throw new Error(detail ?? `HTTP ${response.status}`)
+        if (!response.ok) {
+          let detail
+          try {
+            const data = await response.json()
+            detail = data?.detail
+          } catch (err) {
+            // ignore JSON errors
+          }
+          throw new Error(detail ?? `HTTP ${response.status}`)
+        }
+        setError('')
+        if (response.status === 204) return null
+        return await response.json()
+      } catch (err) {
+        console.error('API Error:', err)
+        if (!String(err.message).includes(t('alerts.sessionExpired'))) {
+          setError(t('alerts.apiUnavailable'))
+        }
+        throw err
       }
-      setError('')
-      if (response.status === 204) return null
-      return await response.json()
-    } catch (err) {
-      console.error('API Error:', err)
-      if (!String(err.message).includes(t('alerts.sessionExpired'))) {
-        setError(t('alerts.apiUnavailable'))
-      }
-      throw err
-    }
-  }, [logout, t, token])
+    },
+    [logout, t, token],
+  )
+
+  const updateInsightsState = useCallback((targetId, data) => {
+    setInsightsMap((prev) => {
+      const next = { ...prev, [targetId]: data }
+      insightsMapRef.current = next
+      return next
+    })
+  }, [])
 
   const fetchInsights = useCallback(
-    async (targetId, { windowMinutes = 60, bucketSeconds = 60, start, end } = {}) => {
+    async (targetId, { windowMinutes = 60, bucketSeconds = 60 } = {}) => {
       const params = new URLSearchParams()
-      if (start) params.set('start', start)
-      if (end) params.set('end', end)
-      if (!start || !end) {
-        params.set('window_minutes', String(windowMinutes))
-      }
+      params.set('window_minutes', String(windowMinutes))
       params.set('bucket_seconds', String(bucketSeconds))
       return apiCall(`/targets/${targetId}/insights?${params.toString()}`)
     },
@@ -305,9 +179,8 @@ function App() {
     async (targetId, options = {}, force = false) => {
       const now = Date.now()
       const last = insightFreshnessRef.current[targetId] ?? 0
-      const isRangeQuery = Boolean(options.start || options.end)
-      const freshnessWindow = force || isRangeQuery ? 0 : DETAIL_INSIGHTS_REFRESH_MS
-      if (!force && !isRangeQuery && now - last < freshnessWindow && insightsMapRef.current[targetId]) {
+      const freshnessWindow = DASHBOARD_INSIGHTS_REFRESH_MS
+      if (!force && now - last < freshnessWindow && insightsMapRef.current[targetId]) {
         return insightsMapRef.current[targetId]
       }
       const data = await fetchInsights(targetId, options)
@@ -316,27 +189,6 @@ function App() {
       return data
     },
     [fetchInsights, updateInsightsState],
-  )
-
-  const loadEvents = useCallback(
-    async (id, { start, end } = {}) => {
-      if (!id || !token) return
-      setIsEventsLoading(true)
-      setEventsError('')
-      setEvents([])
-      try {
-        const params = new URLSearchParams()
-        if (start) params.set('start', start)
-        if (end) params.set('end', end)
-        const response = await apiCall(`/targets/${id}/events?${params.toString()}`)
-        setEvents(response)
-      } catch (err) {
-        setEventsError(t('history.eventsError'))
-      } finally {
-        setIsEventsLoading(false)
-      }
-    },
-    [apiCall, t, token],
   )
 
   const refreshDashboardInsights = useCallback(
@@ -358,46 +210,6 @@ function App() {
     [updateInsights],
   )
 
-  const refreshSelectedInsights = useCallback(
-    async ({ force = false, windowMinutes: overrideWindow, targetId: explicitTargetId, customRange: rangeOverride, showSpinner = true } = {}) => {
-      const targetId = explicitTargetId ?? selectedId
-      if (!targetId) return null
-      const range = rangeOverride ?? customRange
-      const computedMinutes = range
-        ? Math.max(
-            1,
-            Math.round((new Date(range.end).getTime() - new Date(range.start).getTime()) / 60000),
-          )
-        : overrideWindow ?? insightWindow
-      if (computedMinutes <= 0) return null
-      if (showSpinner) {
-        setIsInsightsLoading(true)
-      }
-      try {
-        const requestParams = range
-          ? {
-              start: range.start,
-              end: range.end,
-              bucketSeconds: bucketSecondsForWindow(computedMinutes),
-            }
-          : {
-              windowMinutes: computedMinutes,
-              bucketSeconds: bucketSecondsForWindow(computedMinutes),
-            }
-        const data = await updateInsights(targetId, requestParams, force || Boolean(range))
-        if (data?.window_start && data?.window_end) {
-          await loadEvents(targetId, { start: data.window_start, end: data.window_end })
-        }
-        return data
-      } finally {
-        if (showSpinner) {
-          setIsInsightsLoading(false)
-        }
-      }
-    },
-    [customRange, insightWindow, loadEvents, selectedId, updateInsights],
-  )
-
   const loadTargets = useCallback(async () => {
     if (!token) return
     try {
@@ -408,32 +220,20 @@ function App() {
       if (selectedId && !result.some((target) => target.id === selectedId)) {
         setSelectedId(null)
         setView('dashboard')
-        setLogs([])
       }
     } catch (err) {
       // handled in apiCall
     }
   }, [apiCall, refreshDashboardInsights, selectedId, token])
 
-  const loadLogs = useCallback(async (id) => {
-    if (!id || !token) return
-    try {
-      const result = await apiCall(`/targets/${id}/logs?limit=${LOG_LIMIT}`)
-      setLogs(result)
-    } catch (err) {
-      // handled upstream
-    }
-  }, [apiCall, token])
-
   const handleRefresh = useCallback(async () => {
     if (!token) return
     if (view === 'details' && selectedId) {
-      await loadLogs(selectedId)
-      await refreshSelectedInsights({ force: true })
+      setDetailRefreshSignal(Date.now())
     } else {
       await loadTargets()
     }
-  }, [loadLogs, loadTargets, refreshSelectedInsights, selectedId, token, view])
+  }, [loadTargets, selectedId, token, view])
 
   useEffect(() => {
     if (!token) return
@@ -441,31 +241,14 @@ function App() {
   }, [loadTargets, token])
 
   useEffect(() => {
-    if (!token) return
-    if (view === 'details' && selectedId) {
-      loadLogs(selectedId)
-    }
-  }, [view, selectedId, loadLogs, token])
-
-  useEffect(() => {
-    if (!token) return
-    if (view === 'details' && selectedId) {
-      refreshSelectedInsights({ force: true })
-    }
-  }, [refreshSelectedInsights, selectedId, token, view])
-
-  useEffect(() => {
     if (!token) return undefined
     const interval = setInterval(() => {
-      if (view === 'details' && selectedId && !customRange) {
-        loadLogs(selectedId)
-        refreshSelectedInsights({ force: false, showSpinner: false })
-      } else if (view === 'dashboard') {
+      if (view === 'dashboard') {
         loadTargets()
       }
     }, POLL_INTERVAL)
     return () => clearInterval(interval)
-  }, [customRange, loadLogs, loadTargets, refreshSelectedInsights, selectedId, token, view])
+  }, [loadTargets, token, view])
 
   const handleCreateSubmit = async (event) => {
     event.preventDefault()
@@ -498,172 +281,60 @@ function App() {
     }
   }
 
-  const handleMetadataSave = useCallback(async () => {
-    if (!currentTarget || !metadataChanged) return
-    setIsSavingMetadata(true)
-    setMetadataFeedback('')
-    try {
-      const payload = {
-        url: metadataDraft.url.trim(),
-        notes: metadataDraft.notes,
-      }
-      const updated = await apiCall(`/targets/${currentTarget.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      setTargets((prev) => prev.map((target) => (target.id === updated.id ? updated : target)))
-      setMetadataDraft({ url: updated.url ?? '', notes: updated.notes ?? '' })
-      setMetadataFeedback(t('details.notesSaved'))
-    } catch (err) {
-      setMetadataFeedback(err?.message ?? t('details.notesError'))
-    } finally {
-      setIsSavingMetadata(false)
-    }
-  }, [apiCall, currentTarget, metadataChanged, metadataDraft.notes, metadataDraft.url, t])
-
   const handleSelectTarget = (id) => {
     setSelectedId(id)
     setView('details')
-    setTraceResult(null)
-    setTraceError('')
-    setCustomRange(null)
-    setRangeStart('')
-    setRangeEnd('')
-    setRangeError('')
-    setEvents([])
-    loadLogs(id)
-    refreshSelectedInsights({ force: true, targetId: id })
+    setDetailRefreshSignal(Date.now())
   }
 
-  const applyCustomRange = useCallback(async () => {
-    if (!selectedId) return
-    if (!rangeStart || !rangeEnd) {
-      setRangeError(t('history.rangeMissing'))
-      return
-    }
+  const handleTargetUpdated = useCallback((updatedTarget) => {
+    setTargets((prev) => prev.map((target) => (target.id === updatedTarget.id ? updatedTarget : target)))
+  }, [])
 
-    const startDate = new Date(rangeStart)
-    const endDate = new Date(rangeEnd)
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate >= endDate) {
-      setRangeError(t('history.rangeInvalid'))
-      return
-    }
-
-    setRangeError('')
-    const payload = {
-      start: startDate.toISOString(),
-      end: endDate.toISOString(),
-    }
-    const minutes = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 60000))
-    setCustomRange(payload)
-    setInsightWindow(minutes)
-    await refreshSelectedInsights({ force: true, customRange: payload })
-  }, [rangeEnd, rangeStart, refreshSelectedInsights, selectedId, t])
-
-  const clearCustomRange = useCallback(async () => {
-    setCustomRange(null)
-    setRangeStart('')
-    setRangeEnd('')
-    setRangeError('')
-    setInsightWindow(60)
-    await refreshSelectedInsights({ force: true })
-  }, [refreshSelectedInsights])
-
-  const toggleCurrentTarget = async () => {
-    if (!currentTarget) return
-    setIsBusy(true)
-    try {
-      const action = currentTarget.is_active ? 'pause' : 'resume'
-      await apiCall(`/targets/${currentTarget.id}/${action}`, { method: 'POST' })
-      await loadTargets()
-      await loadLogs(currentTarget.id)
-      await refreshSelectedInsights({ force: true, targetId: currentTarget.id })
-    } catch (err) {
-      // handled upstream
-    } finally {
-      setIsBusy(false)
-    }
-  }
-
-  const deleteCurrentTarget = async () => {
-    if (!currentTarget) return
-    const confirmDelete = window.confirm(t('details.deleteConfirm'))
-    if (!confirmDelete) return
-    setIsBusy(true)
-    try {
-      await apiCall(`/targets/${currentTarget.id}`, { method: 'DELETE' })
-      await loadTargets()
-      setView('dashboard')
-      setSelectedId(null)
-      setLogs([])
-      setInsightsMap((prev) => {
-        const next = { ...prev }
-        delete next[currentTarget.id]
-        insightsMapRef.current = next
-        return next
-      })
-    } catch (err) {
-      // handled upstream
-    } finally {
-      setIsBusy(false)
-    }
-  }
-
-  const handleRunTraceroute = useCallback(async () => {
-    if (!selectedId) return
-    setIsTracing(true)
-    setTraceError('')
-    try {
-      const result = await apiCall(`/targets/${selectedId}/traceroute`, { method: 'POST' })
-      setTraceResult(result)
-    } catch (err) {
-      setTraceError(err.message ?? t('traceroute.unavailable'))
-    } finally {
-      setIsTracing(false)
-    }
-  }, [apiCall, selectedId, t])
-
-  const handleExportLogs = useCallback(async () => {
-    if (!currentTarget || !token) return
-    setIsExporting(true)
-    setExportError('')
-    try {
-      const response = await fetch(`${API_BASE_URL}/targets/${currentTarget.id}/logs/export`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-      if (response.status === 401) {
-        logout(t('alerts.sessionExpired'))
-        throw new Error(t('alerts.sessionExpired'))
+  const handleToggleTarget = useCallback(
+    async (target) => {
+      if (!target) return
+      setIsBusy(true)
+      try {
+        const action = target.is_active ? 'pause' : 'resume'
+        await apiCall(`/targets/${target.id}/${action}`, { method: 'POST' })
+        await loadTargets()
+        setSelectedId(target.id)
+        setDetailRefreshSignal(Date.now())
+      } catch (err) {
+        // handled upstream
+      } finally {
+        setIsBusy(false)
       }
-      if (!response.ok) {
-        let detail
-        try {
-          const data = await response.json()
-          detail = data?.detail
-        } catch (err) {
-          console.error(err)
-        }
-        throw new Error(detail ?? `HTTP ${response.status}`)
+    },
+    [apiCall, loadTargets],
+  )
+
+  const handleDeleteTarget = useCallback(
+    async (target) => {
+      if (!target) return
+      const confirmDelete = window.confirm(t('details.deleteConfirm'))
+      if (!confirmDelete) return
+      setIsBusy(true)
+      try {
+        await apiCall(`/targets/${target.id}`, { method: 'DELETE' })
+        await loadTargets()
+        setView('dashboard')
+        setSelectedId(null)
+        setInsightsMap((prev) => {
+          const next = { ...prev }
+          delete next[target.id]
+          insightsMapRef.current = next
+          return next
+        })
+      } catch (err) {
+        // handled upstream
+      } finally {
+        setIsBusy(false)
       }
-      const blob = await response.blob()
-      const downloadUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      const day = new Date().toISOString().split('T')[0]
-      link.href = downloadUrl
-      link.download = `pingmedaddy-target-${currentTarget.id}-${day}.csv`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(downloadUrl)
-    } catch (err) {
-      setExportError(err?.message ?? t('details.exportError'))
-    } finally {
-      setIsExporting(false)
-    }
-  }, [currentTarget, logout, t, token])
+    },
+    [apiCall, loadTargets, t],
+  )
 
   const downloadCsvFile = useCallback(
     async (endpoint, filename, setLoading) => {
@@ -685,7 +356,7 @@ function App() {
             const data = await response.json()
             detail = data?.detail
           } catch (err) {
-            console.error(err)
+            // ignore parse errors
           }
           throw new Error(detail ?? `HTTP ${response.status}`)
         }
@@ -892,53 +563,53 @@ function App() {
                       const rowInsights = insightsMap[target.id]
                       return (
                         <tr
-                        key={target.id}
-                        className={`hover:bg-slate-50 cursor-pointer border-l-4 transition-colors ${target.is_active ? 'border-l-emerald-500' : 'border-l-transparent'}`}
-                        onClick={() => handleSelectTarget(target.id)}
-                      >
-                        <td className="px-6 py-4">
-                          {target.is_active ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 uppercase tracking-wide">
-                              {t('dashboard.statusActive')}
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase tracking-wide">
-                              {t('dashboard.statusPaused')}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-bold text-slate-700 text-base flex items-center gap-2">
-                            <span>{target.ip}</span>
-                            {target.url && (
-                              <a
-                                href={target.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-emerald-600 hover:text-emerald-700 text-xs font-semibold inline-flex items-center gap-1"
-                                onClick={(event) => event.stopPropagation()}
-                                title={t('dashboard.openInterface')}
-                                aria-label={t('dashboard.openInterface')}
-                              >
-                                {t('dashboard.openInterface')}
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
+                          key={target.id}
+                          className={`hover:bg-slate-50 cursor-pointer border-l-4 transition-colors ${target.is_active ? 'border-l-emerald-500' : 'border-l-transparent'}`}
+                          onClick={() => handleSelectTarget(target.id)}
+                        >
+                          <td className="px-6 py-4">
+                            {target.is_active ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 uppercase tracking-wide">
+                                {t('dashboard.statusActive')}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase tracking-wide">
+                                {t('dashboard.statusPaused')}
+                              </span>
                             )}
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">
-                            {rowInsights
-                              ? `${formatLatency(rowInsights.latency_avg_ms)} • ${t('insights.cards.uptime')} ${formatPercent(rowInsights.uptime_percent)}`
-                              : t('dashboard.metricsLoading')}
-                          </p>
-                        </td>
-                        <td className="px-6 py-4 text-slate-500 font-mono text-xs">{target.frequency}s</td>
-                        <td className="px-6 py-4 text-slate-400 text-xs">
-                          {new Date(target.created_at).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <ChevronRight className="w-5 h-5 text-slate-300 inline-block" />
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="font-bold text-slate-700 text-base flex items-center gap-2">
+                              <span>{target.ip}</span>
+                              {target.url && (
+                                <a
+                                  href={target.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-emerald-600 hover:text-emerald-700 text-xs font-semibold inline-flex items-center gap-1"
+                                  onClick={(event) => event.stopPropagation()}
+                                  title={t('dashboard.openInterface')}
+                                  aria-label={t('dashboard.openInterface')}
+                                >
+                                  {t('dashboard.openInterface')}
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">
+                              {rowInsights
+                                ? `${formatLatency(rowInsights.latency_avg_ms)} • ${t('insights.cards.uptime')} ${formatPercent(rowInsights.uptime_percent)}`
+                                : t('dashboard.metricsLoading')}
+                            </p>
+                          </td>
+                          <td className="px-6 py-4 text-slate-500 font-mono text-xs">{target.frequency}s</td>
+                          <td className="px-6 py-4 text-slate-400 text-xs">
+                            {new Date(target.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <ChevronRight className="w-5 h-5 text-slate-300 inline-block" />
+                          </td>
+                        </tr>
                       )
                     })}
                   </tbody>
@@ -1112,273 +783,20 @@ function App() {
         )}
 
         {view === 'details' && currentTarget && (
-          <section className="fade-in space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setView('dashboard')
-                    setSelectedId(null)
-                  }}
-                  className="p-2 -ml-2 text-slate-400 hover:text-slate-800 transition-colors rounded-full hover:bg-slate-100"
-                >
-                  <ArrowLeft className="w-6 h-6" />
-                </button>
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-800">{currentTarget.ip}</h2>
-                  <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <span className="font-mono">ID: {currentTarget.id}</span> &bull;
-                    <span>
-                      {t('details.freqLabel')} {currentTarget.frequency}s
-                    </span>
-                    <span className="hidden sm:inline">&bull;</span>
-                    <span>
-                      {t('details.startedAt')} {new Date(currentTarget.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-                <span
-                  className={`ml-2 px-2.5 py-0.5 rounded text-xs font-semibold border uppercase tracking-wide ${currentTarget.is_active ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
-                >
-                  {currentTarget.is_active ? t('details.badgeActive') : t('details.badgePaused')}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {currentTarget.url && (
-                  <a
-                    href={currentTarget.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm font-medium shadow-sm transition-colors"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    {t('details.openInterface')}
-                  </a>
-                )}
-                <button
-                  type="button"
-                  onClick={toggleCurrentTarget}
-                  disabled={isBusy}
-                  className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-300 hover:bg-slate-50 rounded-md text-sm font-medium text-slate-700 transition-colors disabled:opacity-60"
-                >
-                  {currentTarget.is_active ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  {currentTarget.is_active ? t('details.pause') : t('details.resume')}
-                </button>
-                <button
-                  type="button"
-                  onClick={deleteCurrentTarget}
-                  disabled={isBusy}
-                  className="flex items-center gap-2 px-3 py-2 bg-white border border-red-200 hover:bg-red-50 rounded-md text-sm font-medium text-red-600 transition-colors disabled:opacity-60"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-              <div className="flex items-start gap-3 mb-4">
-                <NotebookPen className="w-5 h-5 text-slate-400 mt-0.5" />
-                <div>
-                  <h3 className="font-semibold text-slate-700 text-sm">{t('details.notesTitle')}</h3>
-                  <p className="text-xs text-slate-400">{t('details.notesHelper')}</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="lg:col-span-1">
-                  <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">
-                    {t('details.interfaceLabel')}
-                  </label>
-                  <input
-                    type="url"
-                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
-                    placeholder={t('details.interfacePlaceholder')}
-                    value={metadataDraft.url}
-                    onChange={(event) => setMetadataDraft((prev) => ({ ...prev, url: event.target.value }))}
-                  />
-                </div>
-                <div className="lg:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">
-                    {t('details.notesLabel')}
-                  </label>
-                  <textarea
-                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm h-28 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
-                    placeholder={t('details.notesPlaceholder')}
-                    value={metadataDraft.notes}
-                    onChange={(event) => setMetadataDraft((prev) => ({ ...prev, notes: event.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
-                <p className="text-xs text-slate-400 min-h-[1rem]">
-                  {metadataFeedback || t('details.notesHelper')}
-                </p>
-                <button
-                  type="button"
-                  onClick={handleMetadataSave}
-                  disabled={!metadataChanged || isSavingMetadata}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold text-white bg-slate-800 hover:bg-slate-700 disabled:opacity-60"
-                >
-                  {isSavingMetadata ? t('details.notesSaving') : t('details.notesSave')}
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {insightCards.map((card) => (
-                <StatsCard key={card.label} label={card.label} value={card.value} helper={card.helper} accent={card.accent} />
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-                  <div>
-                    <h3 className="font-semibold text-slate-700 flex items-center gap-2">
-                      <Activity className="w-4 h-4" /> {t('charts.latencyTitle')}
-                    </h3>
-                    <p className="text-xs text-slate-500">{t('charts.latencySubtitle', { window: windowLabel, samples: sampleSummary })}</p>
-                  </div>
-                  <div className="flex items-center gap-2 bg-slate-100 rounded-full p-1">
-                    {WINDOW_PRESETS.map((preset) => (
-                      <button
-                        key={preset.value}
-                        type="button"
-                        onClick={() => {
-                          setCustomRange(null)
-                          setRangeError('')
-                          setRangeStart('')
-                          setRangeEnd('')
-                          setInsightWindow(preset.value)
-                          refreshSelectedInsights({
-                            force: true,
-                            windowMinutes: preset.value,
-                            customRange: null,
-                          })
-                        }}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-full transition ${insightWindow === preset.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2 mb-4">
-                  <div className="flex flex-col lg:flex-row lg:items-center gap-2">
-                    <div className="flex flex-1 gap-2">
-                      <input
-                        type="datetime-local"
-                        value={rangeStart}
-                        onChange={(event) => {
-                          setRangeStart(event.target.value)
-                          setRangeError('')
-                        }}
-                        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
-                        aria-label={t('history.rangeStart')}
-                      />
-                      <input
-                        type="datetime-local"
-                        value={rangeEnd}
-                        onChange={(event) => {
-                          setRangeEnd(event.target.value)
-                          setRangeError('')
-                        }}
-                        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
-                        aria-label={t('history.rangeEnd')}
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={applyCustomRange}
-                        className="px-3 py-2 rounded-md text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition disabled:opacity-60"
-                        disabled={isInsightsLoading}
-                      >
-                        {t('history.applyRange')}
-                      </button>
-                      {customRange && (
-                        <button
-                          type="button"
-                          onClick={clearCustomRange}
-                          className="px-3 py-2 rounded-md text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition"
-                        >
-                          {t('history.resetRange')}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {rangeError && <p className="text-xs text-red-500">{rangeError}</p>}
-                  {!rangeError && customRange && (
-                    <p className="text-xs text-emerald-700">
-                      {t('history.rangeActive', { range: windowLabel })}
-                    </p>
-                  )}
-                </div>
-                <LatencyTimelineChart data={timelineData} isLoading={isInsightsLoading} />
-              </div>
-              <div className="flex flex-col gap-4">
-                <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col h-[350px] lg:h-auto">
-                  <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold text-slate-700 text-sm">{t('details.logsTitle')}</h3>
-                      <p className="text-xs text-slate-400">{t('details.logsEntries', { count: logs.length })}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400 bg-white px-2 py-1 rounded-full border border-slate-200">
-                        {t('details.rawTag')}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleExportLogs}
-                        disabled={isExporting}
-                        className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-full hover:bg-slate-100 transition disabled:opacity-60"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        {isExporting ? t('details.exporting') : t('details.export')}
-                      </button>
-                    </div>
-                  </div>
-                  {exportError && (
-                    <p className="px-5 pt-2 text-xs text-red-500">{exportError}</p>
-                  )}
-                  <LogsTable logs={reversedLogs} />
-                </div>
-
-                <EventLog
-                  events={events}
-                  isLoading={isEventsLoading}
-                  error={eventsError}
-                  rangeLabel={currentInsights ? formatWindowRange(currentInsights) : ''}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-700 text-sm">{t('details.lossTitle')}</h3>
-                  <span className="text-xs text-slate-400">{t('details.lossSubtitle')}</span>
-                </div>
-                <LossTimelineChart data={timelineData} isLoading={isInsightsLoading} />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 text-sm">
-                  <div>
-                    <p className="text-xs uppercase text-slate-400">{t('details.windowAnalyzed')}</p>
-                    <p className="font-mono text-slate-700">{formatWindowRange(currentInsights)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase text-slate-400">{t('details.samplesLabel')}</p>
-                    <p className="font-semibold text-slate-700">{sampleSummary}</p>
-                  </div>
-                </div>
-              </div>
-              <TraceroutePanel
-                onRun={handleRunTraceroute}
-                isLoading={isTracing}
-                error={traceError}
-                result={traceResult}
-              />
-            </div>
-          </section>
+          <TargetDetailsPage
+            target={currentTarget}
+            token={token}
+            apiCall={apiCall}
+            onBack={() => {
+              setView('dashboard')
+              setSelectedId(null)
+            }}
+            onTargetUpdate={handleTargetUpdated}
+            onTargetDelete={handleDeleteTarget}
+            onToggleTarget={handleToggleTarget}
+            refreshSignal={detailRefreshSignal}
+            isBusy={isBusy}
+          />
         )}
       </main>
     </div>
