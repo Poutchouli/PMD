@@ -1,13 +1,28 @@
 # PingMeDaddy
 
-Async network telemetry platform that keeps a rolling eye on hundreds of IP targets, stores their latency/packet-loss traces in TimescaleDB, and exposes fast analytics through a FastAPI backend, CLI, and React dashboard.
+Async network telemetry platform that keeps a rolling eye on hundreds of IP targets, stores their latency/packet-loss traces in TimescaleDB, and exposes fast analytics through a FastAPI backend, CLI, [...]
 
 ## Highlights
 - Track hundreds of IPv4/IPv6 targets concurrently with an asyncio scheduler.
 - Persist raw ping samples in Timescale hypertables, then auto-contract them into 1-minute and 1-hour aggregates for long-term trend analysis.
 - Drill into uptime, percentile latency, packet-loss, and hop counts via `/targets/{id}/insights` or export every raw ping as CSV.
 - Launch on-demand traceroute diagnostics directly from the API or dashboard.
-- Drive everything via REST (see [API_GUIDE.md](API_GUIDE.md)), the authenticated CLI (`python -m app.cli`), or the React + Vite frontend located in [frontend/](frontend).
+- Drive everything via REST (see [API_GUIDE.md](https://github.com/Poutchouli/PingMeDaddy/blob/690b736d62d888c7099923cd8d9d3521c410e8fb/API_GUIDE.md)), the authenticated CLI (`python -m app.cli`), or the React + Vite frontend located in [frontend/](https://github.com/Poutchouli/PingMeDaddy/tree/690b736d62d888c7099923cd8d9d3521c410e8fb/frontend).
+
+## Login (change them in the .env)
+<img width="694" height="645" alt="image" src="https://github.com/user-attachments/assets/1bd1b6fa-5cf9-4fd9-9a09-294bb0d46784" />
+
+## Dashboard
+<img width="1279" height="552" alt="image" src="https://github.com/user-attachments/assets/6c1e1243-c536-487c-8fc5-d4543f46e3c4" />
+
+## Details
+<img width="1271" height="1128" alt="image" src="https://github.com/user-attachments/assets/b05cb016-7d73-4f68-8599-8ef171585664" />
+
+## Event graph
+<img width="843" height="783" alt="image" src="https://github.com/user-attachments/assets/61183629-a789-48c9-9edd-229825467b96" />
+
+## On-demand traceroute
+<img width="429" height="633" alt="image" src="https://github.com/user-attachments/assets/a73de5b4-0c22-4541-b2ad-3c5b8fd1e094" />
 
 ## System Architecture
 ```
@@ -22,7 +37,7 @@ Async network telemetry platform that keeps a rolling eye on hundreds of IP targ
 
 ## Tech Stack
 - Backend: FastAPI, SQLAlchemy, asyncpg, JWT auth, asyncio scheduler, traceroute subprocess integration.
-- Storage: PostgreSQL with TimescaleDB extension, hypertables seeded by [scripts/timescale_init.sql](scripts/timescale_init.sql).
+- Storage: PostgreSQL with TimescaleDB extension, hypertables seeded by [scripts/timescale_init.sql](https://github.com/Poutchouli/PingMeDaddy/blob/690b736d62d888c7099923cd8d9d3521c410e8fb/scripts/timescale_init.sql).
 - Frontend: React 19, Vite, TailwindCSS, Recharts, lucide-react icons.
 - Tooling: Docker Compose, pytest, ESLint, GitHub Actions-ready CLI/tests.
 
@@ -69,16 +84,16 @@ Configure once in `.env` (shared by FastAPI and Docker):
 - `AUTH_SECRET`, `AUTH_TOKEN_MINUTES` – JWT signing and TTL.
 - `CORS_ORIGINS` – comma-separated origins for the SPA.
 - `TRACEROUTE_BINARY` – override if traceroute lives outside the default path.
-See [app/config.py](app/config.py) for the full list and defaults.
+See [app/config.py](https://github.com/Poutchouli/PingMeDaddy/blob/690b736d62d888c7099923cd8d9d3521c410e8fb/app/config.py) for the full list and defaults.
 
 ## Data Lifecycle
 - Raw hypertable keeps every second-level ping for 3 days (≈4 GB for 300 targets).
-- Continuous aggregates down-sample into 1-minute buckets (retained 1 month) and 1-hour buckets (5 years) per [project.md](project.md).
+- Continuous aggregates down-sample into 1-minute buckets (retained 1 month) and 1-hour buckets (5 years) per [project.md](https://github.com/Poutchouli/PingMeDaddy/blob/690b736d62d888c7099923cd8d9d3521c410e8fb/project.md).
 - Metrics shipped by `/targets/{id}/insights` are computed from those aggregates, while `/logs` surfaces raw samples for recent debugging windows.
 
 ## Database Utilities
-- Initial schema + hypertables: automatically loaded from [scripts/timescale_init.sql](scripts/timescale_init.sql) when the DB container boots.
-- Synthetic telemetry: [scripts/seed_historical_data.py](scripts/seed_historical_data.py) populates multi-year traces to showcase charts and validate aggregation jobs.
+- Initial schema + hypertables: automatically loaded from [scripts/timescale_init.sql](https://github.com/Poutchouli/PingMeDaddy/blob/690b736d62d888c7099923cd8d9d3521c410e8fb/scripts/timescale_init.sql) when the DB container boots.
+- Synthetic telemetry: [scripts/seed_historical_data.py](https://github.com/Poutchouli/PingMeDaddy/blob/690b736d62d888c7099923cd8d9d3521c410e8fb/scripts/seed_historical_data.py) populates multi-year traces to showcase charts and validate aggregation jobs.
 
 ## CLI Cheatsheet
 The CLI mirrors the HTTP surface and is ideal for scripting:
@@ -92,12 +107,12 @@ python -m app.cli traceroute 42 --max-hops 30
 Add `--help` to any subcommand for usage details. The CLI shares the same DB and scheduler as the API, so actions sync instantly.
 
 ## API Documentation
-Comprehensive request/response payloads live in [API_GUIDE.md](API_GUIDE.md). You can also explore the autogenerated OpenAPI docs at `/docs` or `/redoc` once the server is running.
+Comprehensive request/response payloads live in [API_GUIDE.md](https://github.com/Poutchouli/PingMeDaddy/blob/690b736d62d888c7099923cd8d9d3521c410e8fb/API_GUIDE.md). You can also explore the autogenerated OpenAPI docs at `/docs` or `/redoc` once the server is running.
 
 ## Testing
-- Backend tests: `pytest` (see [tests/](tests)).
+- Backend tests: `pytest` (see [tests/](https://github.com/Poutchouli/PingMeDaddy/tree/690b736d62d888c7099923cd8d9d3521c410e8fb/tests)).
 - CLI smoke tests: `pytest tests/test_cli.py`.
-- Frontend lint: `npm run lint` inside [frontend/](frontend).
+- Frontend lint: `npm run lint` inside [frontend/](https://github.com/Poutchouli/PingMeDaddy/tree/690b736d62d888c7099923cd8d9d3521c410e8fb/frontend).
 Add `--maxfail=1 -x` for quicker feedback loops during active development.
 
 ## Project Structure
@@ -116,6 +131,6 @@ Add `--maxfail=1 -x` for quicker feedback loops during active development.
 ## Troubleshooting
 - **Traceroute missing**: install `traceroute` inside the backend container or set `TRACEROUTE_BINARY` to the correct executable path.
 - **JWT failures**: regenerate `AUTH_SECRET` and restart the app; tokens issued with the old secret become invalid.
-- **Slow dashboards**: verify continuous aggregates exist (`\d+ continuous_agg_*` in psql) and that retention policies are running; reseed via `scripts/seed_historical_data.py` if you need fresh data.
+- **Slow dashboards**: verify continuous aggregates exist (`\\d+ continuous_agg_*` in psql) and that retention policies are running; reseed via `scripts/seed_historical_data.py` if you need fresh data.
 
 Happy monitoring! 🚀
