@@ -2,16 +2,20 @@ import { useMemo } from 'react'
 import { useTranslation } from '../../i18n/LanguageProvider'
 import { formatDateTime, formatLatency } from '../../utils/formatters'
 
+const MAX_VISIBLE_ROWS = 20
+const APPROX_ROW_HEIGHT_PX = 42
+
 function LogsTable({ logs }) {
   const { t } = useTranslation()
   const rows = useMemo(() => logs ?? [], [logs])
+  const maxHeight = MAX_VISIBLE_ROWS * APPROX_ROW_HEIGHT_PX
 
   if (!rows.length) {
     return <div className="p-5 text-sm text-slate-500">{t('logs.empty')}</div>
   }
 
   return (
-    <div className="overflow-y-auto">
+    <div className="overflow-y-auto" style={{ maxHeight }}>
       <table className="w-full text-xs">
         <thead className="bg-slate-50 text-slate-500 sticky top-0 z-10">
           <tr>
