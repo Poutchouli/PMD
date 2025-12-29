@@ -173,6 +173,7 @@ export const messages = {
         latency: 'Latency',
         status: 'Status',
       },
+      ok: 'OK',
       timeout: 'Timeout',
     },
     traceroute: {
@@ -361,6 +362,7 @@ export const messages = {
         latency: 'Latence',
         status: 'État',
       },
+      ok: 'OK',
       timeout: 'Timeout',
     },
     traceroute: {
@@ -549,6 +551,7 @@ export const messages = {
         latency: '延遲',
         status: '狀態',
       },
+      ok: 'OK',
       timeout: '逾時',
     },
     traceroute: {
