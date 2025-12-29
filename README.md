@@ -11,16 +11,18 @@
 
 ## Screenshots
 - Login (default creds in `.env`):
-        <img width="640" alt="Login screen" src="https://github.com/user-attachments/assets/1bd1b6fa-5cf9-4fd9-9a09-294bb0d46784" />
+        <img width="552" height="523" alt="image" src="https://github.com/user-attachments/assets/c0f8231f-d3a6-4ad8-9f29-193b67e41060" />
 - Dashboard overview:
-        <img width="1180" alt="Dashboard" src="https://github.com/user-attachments/assets/6c1e1243-c536-487c-8fc5-d4543f46e3c4" />
+        <img width="1029" height="479" alt="image" src="https://github.com/user-attachments/assets/3ef80373-c8cb-408a-833d-7bfa5891c6f9" />
 - Target details with timeline:
-        <img width="1180" alt="Target details" src="https://github.com/user-attachments/assets/b05cb016-7d73-4f68-8599-8ef171585664" />
+        <img width="1275" height="1177" alt="image" src="https://github.com/user-attachments/assets/86f7946d-71d2-4881-a361-a4e3bb6fdf28" />
 - Event / latency graph:
-        <img width="820" alt="Event graph" src="https://github.com/user-attachments/assets/61183629-a789-48c9-9edd-229825467b96" />
+        <img width="806" height="446" alt="image" src="https://github.com/user-attachments/assets/bfc2f82d-1ef1-44fd-9701-7dbd646d35ce" />
+        (Server restarts and a pause)
+        <img width="421" height="447" alt="image" src="https://github.com/user-attachments/assets/daf33aa6-a42c-474a-a400-1d632dad1297" />
+        <img width="837" height="360" alt="image" src="https://github.com/user-attachments/assets/3bf7a7fe-305b-4147-afa3-89cb6f19ced3" />
 - On-demand traceroute:
-        <img width="420" alt="Traceroute" src="https://github.com/user-attachments/assets/a73de5b4-0c22-4541-b2ad-3c5b8fd1e094" />
-- ^^graph of event^^ (drop in any missing view we should highlight)
+        <img width="401" height="552" alt="image" src="https://github.com/user-attachments/assets/bca4360b-8ba8-4bd4-b8ea-20f61c7066a0" />
 
 ## Architecture
 ```
