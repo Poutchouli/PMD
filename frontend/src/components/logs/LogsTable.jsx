@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useTranslation } from '../../i18n/LanguageProvider'
 import { formatDateTime, formatLatency } from '../../utils/formatters'
 
-const MAX_VISIBLE_ROWS = 20
+const MAX_VISIBLE_ROWS = 9
 const APPROX_ROW_HEIGHT_PX = 42
 
 function LogsTable({ logs }) {
