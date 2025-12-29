@@ -17,22 +17,33 @@
 - Target details with timeline:
         <img width="1275" height="1177" alt="image" src="https://github.com/user-attachments/assets/86f7946d-71d2-4881-a361-a4e3bb6fdf28" />
 - Event / latency graph:
-        <img width="806" height="446" alt="image" src="https://github.com/user-attachments/assets/bfc2f82d-1ef1-44fd-9701-7dbd646d35ce" />
-        (Server restarts and a pause)
-        <img width="421" height="447" alt="image" src="https://github.com/user-attachments/assets/daf33aa6-a42c-474a-a400-1d632dad1297" />
-        <img width="837" height="360" alt="image" src="https://github.com/user-attachments/assets/3bf7a7fe-305b-4147-afa3-89cb6f19ced3" />
+
+<img width="843" height="783" alt="Capture d&#39;écran 2025-12-16 002524" src="https://github.com/user-attachments/assets/58d0ca45-8fa7-4896-8d57-0e6677c16228" />
+
+  <img width="806" height="446" alt="image" src="https://github.com/user-attachments/assets/bfc2f82d-1ef1-44fd-9701-7dbd646d35ce" />
+  
+  (Server restarts and a pause)
+  
+  <img width="421" height="447" alt="image" src="https://github.com/user-attachments/assets/daf33aa6-a42c-474a-a400-1d632dad1297" />
+
+  <img width="837" height="360" alt="image" src="https://github.com/user-attachments/assets/3bf7a7fe-305b-4147-afa3-89cb6f19ced3" />
+  
+  <img width="849" height="379" alt="Capture d&#39;écran 2025-12-15 235035" src="https://github.com/user-attachments/assets/4de323fa-a8cf-4639-ab96-1028e880e6ee" />
+
+  
 - On-demand traceroute:
-        <img width="401" height="552" alt="image" src="https://github.com/user-attachments/assets/bca4360b-8ba8-4bd4-b8ea-20f61c7066a0" />
+
+<img width="401" height="552" alt="image" src="https://github.com/user-attachments/assets/bca4360b-8ba8-4bd4-b8ea-20f61c7066a0" />
 
 ## Architecture
 ```
-┌────────────┐      ┌───────────────────────┐      ┌─────────────────────┐
-│ React SPA  │◀────▶│ FastAPI + Scheduler  │◀────▶│ TimescaleDB (Postgres)│
-│ (Vite/Tailwind)   ││ Auth, CLI, tracing   ││ Raw + continuous aggs    │
-└────────────┘      └───────────────────────┘      └─────────────────────┘
-                                ▲                      │                              │
-                                │                      ▼                              │
-                                └────── docker-compose networking + shared env ───────┘
+┌────────────┐      ┌───────────────────────┐      ┌────────────────────────┐
+│ React SPA  │◀───▶│ FastAPI + Scheduler   │◀───▶│ TimescaleDB (Postgres) │
+│ (Vite/Tailwind)│  │ Auth, CLI, tracing    │      │ Raw + continuous aggs  │
+└────────────┘      └───────────────────────┘      └────────────────────────┘
+      ▲                       │                                │
+      │                       ▼                                │
+      └────── docker-compose networking + shared env ──────────┘
 ```
 
 ## What you get
