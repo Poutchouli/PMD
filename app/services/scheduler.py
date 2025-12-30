@@ -7,10 +7,15 @@ from app.db import AsyncSessionLocal
 from app.models import MonitorTarget, PingLog, EventLog
 from app.services.pinger import ping_target
 
+# Number of consecutive failed pings before creating an event
+CONSECUTIVE_FAILURES_THRESHOLD = 5
+
 
 class MonitorScheduler:
     def __init__(self):
         self.tasks: Dict[int, asyncio.Task] = {}
+        self._failure_counts: Dict[int, int] = {}  # Track consecutive failures per target
+        self._in_failure_state: Dict[int, bool] = {}  # Track if we already reported failure
 
     async def _record_event(self, target_id: int, event_type: str, message: str) -> None:
         async with AsyncSessionLocal() as session:
@@ -32,11 +37,39 @@ class MonitorScheduler:
                     )
                 )
                 await session.commit()
+
+            # Track consecutive failures and create events
+            if loss:
+                self._failure_counts[target_id] = self._failure_counts.get(target_id, 0) + 1
+                # Create event when threshold is reached and we haven't already reported
+                if (self._failure_counts[target_id] >= CONSECUTIVE_FAILURES_THRESHOLD
+                        and not self._in_failure_state.get(target_id, False)):
+                    self._in_failure_state[target_id] = True
+                    await self._record_event(
+                        target_id,
+                        "failure",
+                        f"Target {ip} unreachable - {self._failure_counts[target_id]} consecutive failed pings"
+                    )
+            else:
+                # If we were in failure state and now recovered, create recovery event
+                if self._in_failure_state.get(target_id, False):
+                    await self._record_event(
+                        target_id,
+                        "recovery",
+                        f"Target {ip} recovered after {self._failure_counts[target_id]} failed pings"
+                    )
+                # Reset failure tracking
+                self._failure_counts[target_id] = 0
+                self._in_failure_state[target_id] = False
+
             await asyncio.sleep(frequency)
 
     async def start_for_target(self, target: MonitorTarget):
         if target.id in self.tasks:
             return
+        # Initialize failure tracking for this target
+        self._failure_counts[target.id] = 0
+        self._in_failure_state[target.id] = False
         task = asyncio.create_task(self.monitor_loop(target.id, target.ip_address, target.frequency))
         self.tasks[target.id] = task
         await self._record_event(target.id, "start", f"Tracking started for {target.ip_address}")
@@ -45,6 +78,9 @@ class MonitorScheduler:
         if target_id in self.tasks:
             self.tasks[target_id].cancel()
             self.tasks.pop(target_id, None)
+        # Clean up failure tracking
+        self._failure_counts.pop(target_id, None)
+        self._in_failure_state.pop(target_id, None)
         await self._record_event(target_id, "stop", message)
 
     async def load_existing(self):

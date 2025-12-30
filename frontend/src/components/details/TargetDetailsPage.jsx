@@ -106,6 +106,13 @@ function TargetDetailsPage({
     return `window-${insightWindow}`
   }, [customRange, insightWindow])
 
+  // Check if last 5 pings have issues (packet loss) - only refresh events when there are problems
+  const hasRecentIssues = useMemo(() => {
+    const recentLogs = logsQuery.data?.slice(0, 5) ?? []
+    if (recentLogs.length === 0) return false
+    return recentLogs.some((log) => log.packet_loss)
+  }, [logsQuery.data])
+
   const logsQuery = useQuery({
     queryKey: ['logs', target?.id],
     queryFn: async () => apiCall(`/targets/${target.id}/logs?limit=${LOG_LIMIT}`),
@@ -146,19 +153,35 @@ function TargetDetailsPage({
     refetchIntervalInBackground: false,
   })
 
+  // Stabilize the window boundaries to prevent unnecessary refetches
+  // Only update when window preset or custom range changes, not on every insights refresh
+  const stableEventWindow = useMemo(() => {
+    if (!insightsQuery.data?.window_start || !insightsQuery.data?.window_end) return null
+    return {
+      start: insightsQuery.data.window_start,
+      end: insightsQuery.data.window_end,
+    }
+  }, [insightKey, Boolean(insightsQuery.data)]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const eventsQuery = useQuery({
-    queryKey: ['events', target?.id, insightsQuery.data?.window_start, insightsQuery.data?.window_end],
+    queryKey: ['events', target?.id, insightKey],
     queryFn: async () => {
       const params = new URLSearchParams()
-      params.set('start', insightsQuery.data.window_start)
-      params.set('end', insightsQuery.data.window_end)
+      params.set('start', stableEventWindow.start)
+      params.set('end', stableEventWindow.end)
       return apiCall(`/targets/${target.id}/events?${params.toString()}`)
     },
-    enabled: Boolean(
-      target?.id && insightsQuery.data?.window_start && insightsQuery.data?.window_end,
-    ),
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
+    enabled: Boolean(target?.id && stableEventWindow),
+    staleTime: 60_000, // Events don't change often, cache for 1 minute
+    refetchOnWindowFocus: false, // Don't refetch on every focus
+    // Only poll for events when there are recent issues (last 5 pings have problems)
+    refetchInterval: () => {
+      if (!target?.is_active) return false
+      if (!isVisible) return false
+      if (!hasRecentIssues) return false // Only refetch if there are recent issues
+      return 30_000 // Check every 30s when there are issues
+    },
+    refetchIntervalInBackground: false,
   })
 
   useEffect(() => {
