@@ -106,13 +106,6 @@ function TargetDetailsPage({
     return `window-${insightWindow}`
   }, [customRange, insightWindow])
 
-  // Check if last 5 pings have issues (packet loss) - only refresh events when there are problems
-  const hasRecentIssues = useMemo(() => {
-    const recentLogs = logsQuery.data?.slice(0, 5) ?? []
-    if (recentLogs.length === 0) return false
-    return recentLogs.some((log) => log.packet_loss)
-  }, [logsQuery.data])
-
   const logsQuery = useQuery({
     queryKey: ['logs', target?.id],
     queryFn: async () => apiCall(`/targets/${target.id}/logs?limit=${LOG_LIMIT}`),
@@ -126,6 +119,13 @@ function TargetDetailsPage({
     },
     refetchIntervalInBackground: false,
   })
+
+  // Check if last 5 pings have issues (packet loss) - only refresh events when there are problems
+  const hasRecentIssues = useMemo(() => {
+    const recentLogs = logsQuery.data?.slice(0, 5) ?? []
+    if (recentLogs.length === 0) return false
+    return recentLogs.some((log) => log.packet_loss)
+  }, [logsQuery.data])
 
   const insightsQuery = useQuery({
     queryKey: ['insights', target?.id, insightKey],
