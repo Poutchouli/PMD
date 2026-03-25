@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     APP_HOST: Optional[str] = None
 
     # Ports HTTP
-    API_PORT: int = 6666
+    API_PORT: int = 6680
     FRONTEND_PORT: int = 3000
 
     # Hub connectivity

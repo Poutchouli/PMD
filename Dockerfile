@@ -26,7 +26,7 @@ COPY main.py ./
 # Créer les répertoires de storage
 RUN mkdir -p /app/storage /app/uploads
 
-ENV APP_PORT=6666
-EXPOSE 6666
+ENV API_PORT=6680
+EXPOSE 6680
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${APP_PORT:-6666}"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${API_PORT:-6680}"]
