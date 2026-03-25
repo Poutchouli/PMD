@@ -237,7 +237,6 @@ function App() {
   const handleSelectTarget = (id) => {
     setSelectedId(id)
     setView('details')
-    setDetailRefreshSignal(Date.now())
   }
 
   const handleTargetUpdated = useCallback((updatedTarget) => {

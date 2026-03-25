@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
@@ -64,6 +64,7 @@ function TargetDetailsPage({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const isVisible = usePageVisibility()
+  const lastRefreshSignalRef = useRef(0)
   const [insightWindow, setInsightWindow] = useState(60)
   const [customRange, setCustomRange] = useState(null)
   const [rangeStart, setRangeStart] = useState('')
@@ -91,7 +92,7 @@ function TargetDetailsPage({
     queryClient.removeQueries({ queryKey: ['logs', target?.id] })
     queryClient.removeQueries({ queryKey: ['insights', target?.id] })
     queryClient.removeQueries({ queryKey: ['events', target?.id] })
-  }, [queryClient, target])
+  }, [queryClient, target?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const metadataChanged = useMemo(() => {
     if (!target) return false
@@ -186,11 +187,12 @@ function TargetDetailsPage({
   })
 
   useEffect(() => {
-    if (!refreshSignal) return
-    logsQuery.refetch()
-    insightsQuery.refetch()
-    eventsQuery.refetch()
-  }, [eventsQuery, insightsQuery, logsQuery, refreshSignal])
+    if (!refreshSignal || refreshSignal === lastRefreshSignalRef.current) return
+    lastRefreshSignalRef.current = refreshSignal
+    queryClient.invalidateQueries({ queryKey: ['logs', target?.id] })
+    queryClient.invalidateQueries({ queryKey: ['insights', target?.id] })
+    queryClient.invalidateQueries({ queryKey: ['events', target?.id] })
+  }, [refreshSignal, queryClient, target?.id])
 
   const reversedLogs = useMemo(() => {
     const data = logsQuery.data ?? []
