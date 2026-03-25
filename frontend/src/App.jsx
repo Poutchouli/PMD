@@ -19,10 +19,10 @@ import LoginScreen from './components/auth/LoginScreen'
 import LanguageSelector from './components/common/LanguageSelector'
 import TargetDetailsPage from './components/details/TargetDetailsPage'
 import { useTranslation } from './i18n/LanguageProvider'
+import { useAuth } from './context/AuthContext'
+import { useConfig } from './context/ConfigContext'
 import { formatLatency, formatPercent } from './utils/formatters'
 import { bucketSecondsForWindow } from './utils/insights'
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:6666'
 const POLL_INTERVAL = 3000
 const DASHBOARD_INSIGHTS_REFRESH_MS = 60_000
 
@@ -30,6 +30,8 @@ const createEmptyTargetForm = () => ({ ip: '', frequency: 5, url: '', notes: '' 
 
 function App() {
   const { t } = useTranslation()
+  const { token, isAuthenticated, logout: hubLogout, authFetch } = useAuth()
+  const { apiUrl } = useConfig()
   const [view, setView] = useState('dashboard')
   const [targets, setTargets] = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -37,13 +39,6 @@ function App() {
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
-  const [token, setToken] = useState(() => {
-    if (typeof window === 'undefined') return null
-    return window.localStorage.getItem('pmd_token')
-  })
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
-  const [loginError, setLoginError] = useState('')
-  const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [insightsMap, setInsightsMap] = useState({})
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false)
   const [isDownloadingTargetsCsv, setIsDownloadingTargetsCsv] = useState(false)
@@ -58,7 +53,6 @@ function App() {
   const insightFreshnessRef = useRef({})
   const lastDashboardInsightsRef = useRef(0)
   const importFileRef = useRef(null)
-  const isAuthenticated = Boolean(token)
 
   const currentTarget = useMemo(
     () => targets.find((target) => target.id === selectedId) ?? null,
@@ -67,10 +61,6 @@ function App() {
 
   const logout = useCallback(
     (message) => {
-      if (typeof window !== 'undefined') {
-        window.localStorage.removeItem('pmd_token')
-      }
-      setToken(null)
       setView('dashboard')
       setSelectedId(null)
       setTargets([])
@@ -80,42 +70,10 @@ function App() {
       if (message) {
         setError(message)
       }
+      hubLogout()
     },
-    [],
+    [hubLogout],
   )
-
-  const handleLoginSubmit = async (event) => {
-    event.preventDefault()
-    if (isLoggingIn) return
-    setIsLoggingIn(true)
-    setLoginError('')
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: loginForm.username.trim(),
-          password: loginForm.password,
-        }),
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok || !payload?.access_token) {
-        throw new Error(payload?.detail ?? t('auth.invalidCredentials'))
-      }
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('pmd_token', payload.access_token)
-      }
-      setToken(payload.access_token)
-      setLoginForm({ username: '', password: '' })
-      setLoginError('')
-      setError('')
-    } catch (err) {
-      setLoginError(err.message ?? t('auth.genericError'))
-    } finally {
-      setIsLoggingIn(false)
-      setLoginForm((prev) => ({ ...prev, password: '' }))
-    }
-  }
 
   const apiCall = useCallback(
     async (endpoint, options = {}) => {
@@ -123,12 +81,7 @@ function App() {
         throw new Error(t('auth.notAuthenticated'))
       }
       try {
-        const headers = new Headers(options.headers ?? {})
-        headers.set('Authorization', `Bearer ${token}`)
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-          ...options,
-          headers,
-        })
+        const response = await authFetch(endpoint, options)
         if (response.status === 401) {
           logout(t('alerts.sessionExpired'))
           throw new Error(t('alerts.sessionExpired'))
@@ -154,7 +107,7 @@ function App() {
         throw err
       }
     },
-    [logout, t, token],
+    [authFetch, logout, t, token],
   )
 
   const updateInsightsState = useCallback((targetId, data) => {
@@ -341,11 +294,7 @@ function App() {
       if (!token) return
       setLoading(true)
       try {
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
+        const response = await authFetch(endpoint)
         if (response.status === 401) {
           logout(t('alerts.sessionExpired'))
           throw new Error(t('alerts.sessionExpired'))
@@ -373,7 +322,7 @@ function App() {
         setLoading(false)
       }
     },
-    [logout, t, token],
+    [authFetch, logout, t, token],
   )
 
   const handleDownloadTemplate = useCallback(async () => {
@@ -407,11 +356,8 @@ function App() {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const response = await fetch(`${API_BASE_URL}/targets/import`, {
+      const response = await authFetch(`/targets/import`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
         body: formData,
       })
       if (response.status === 401) {
@@ -445,15 +391,7 @@ function App() {
   }, [loadTargets, logout, t, token])
 
   if (!isAuthenticated) {
-    return (
-      <LoginScreen
-        form={loginForm}
-        onChange={setLoginForm}
-        onSubmit={handleLoginSubmit}
-        error={loginError}
-        isLoading={isLoggingIn}
-      />
-    )
+    return <LoginScreen />
   }
 
   return (

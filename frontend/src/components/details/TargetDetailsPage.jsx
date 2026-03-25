@@ -19,6 +19,7 @@ import TraceroutePanel from '../network/TraceroutePanel'
 import { useTranslation } from '../../i18n/LanguageProvider'
 import { formatLatency, formatPercent, formatWindowLabel, formatWindowRange } from '../../utils/formatters'
 import { buildTimelineData, bucketSecondsForWindow } from '../../utils/insights'
+import config from '../../config'
 
 const LOG_LIMIT = 50
 const POLL_INTERVAL = 3000
@@ -31,7 +32,7 @@ const WINDOW_PRESETS = [
   { label: '24 h', value: 1440 },
 ]
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:6666'
+const API_BASE_URL = config.apiUrl
 
 function usePageVisibility() {
   const [isVisible, setIsVisible] = useState(() => {

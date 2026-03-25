@@ -1,15 +1,16 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends
 
-from app.schemas import LoginRequest, TokenResponse
-from app.security import create_access_token, verify_credentials
+from app.hub_auth import TokenPayload, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest):
-    if not verify_credentials(payload.username, payload.password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
-    token = create_access_token(payload.username)
-    return TokenResponse(access_token=token, token_type="bearer")
+@router.get("/me")
+async def get_me(user: TokenPayload = Depends(get_current_user)):
+    """Retourne les informations de l'utilisateur connecté."""
+    return {
+        "username": user.sub,
+        "apps": user.apps,
+        "token_type": user.token_type,
+        "is_service_account": user.is_service_account(),
+    }

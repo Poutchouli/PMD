@@ -29,9 +29,9 @@ from app.schemas import (
 from app.services.scheduler import scheduler
 from app.services.stats import MAX_SAMPLES, compute_target_insights
 from app.services import traceroute as traceroute_service
-from app.security import require_auth
+from app.hub_auth import get_current_user, require_role
 
-router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(get_current_user)])
 
 TARGET_CSV_FIELDS = ["ip", "frequency", "url", "notes", "is_active"]
 

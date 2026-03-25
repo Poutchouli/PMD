@@ -54,6 +54,17 @@ class EventLog(Base):
     target = relationship("MonitorTarget", back_populates="events")
 
 
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    theme = Column(String(20), default="system")
+    language = Column(String(5), default="fr")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
 # SQL TO RUN IN POSTGRES (One-time setup for TimescaleDB)
 """
 -- 1. Convert regular table to hypertable

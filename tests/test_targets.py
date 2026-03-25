@@ -3,9 +3,6 @@ import asyncio
 from datetime import datetime, timezone
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_pingmedaddy.db"
-os.environ["ADMIN_USERNAME"] = "admin"
-os.environ["ADMIN_PASSWORD"] = "changeme"
-os.environ["AUTH_SECRET"] = "test-secret"
 os.environ["CORS_ORIGINS"] = "http://test"
 
 import pytest
@@ -19,6 +16,8 @@ from app.services import scheduler as scheduler_service  # noqa: E402
 from app.services import traceroute as traceroute_service  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.models import Base  # noqa: E402
+from app.hub_auth import get_current_user  # noqa: E402
+from tests.conftest import create_mock_token  # noqa: E402
 
 @pytest.mark.asyncio
 async def test_create_pause_resume_flow(monkeypatch):
@@ -51,6 +50,8 @@ async def test_create_pause_resume_flow(monkeypatch):
     await scheduler_service.scheduler.shutdown()
 
     app = create_app()
+    mock_user = create_mock_token()
+    app.dependency_overrides[get_current_user] = lambda: mock_user
     transport = httpx.ASGITransport(app=app)
 
     async with engine.begin() as conn:
@@ -58,13 +59,7 @@ async def test_create_pause_resume_flow(monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        login_resp = await client.post(
-            "/auth/login",
-            json={"username": os.environ["ADMIN_USERNAME"], "password": os.environ["ADMIN_PASSWORD"]},
-        )
-        assert login_resp.status_code == 200
-        token = login_resp.json()["access_token"]
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = {"Authorization": "Bearer mock_token"}
 
         resp = await client.post(
             "/targets/", json={"ip": "192.168.1.254", "frequency": 1}, headers=headers
@@ -172,3 +167,5 @@ async def test_create_pause_resume_flow(monkeypatch):
         assert resp.status_code == 200
         targets = resp.json()
         assert all(t["id"] != target_id for t in targets)
+
+    app.dependency_overrides.clear()

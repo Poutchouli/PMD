@@ -125,16 +125,6 @@ class EventLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
 class LatencyPoint(BaseModel):
     bucket: datetime
     avg_latency_ms: Optional[float]
@@ -179,3 +169,71 @@ class TracerouteResponse(BaseModel):
     finished_at: datetime
     duration_ms: float
     hops: List[TracerouteHop]
+
+
+# ============ User Preferences ============
+
+class UserPreferenceUpdate(BaseModel):
+    theme: Optional[str] = Field(None, pattern="^(light|dark|system)$")
+    language: Optional[str] = Field(None, min_length=2, max_length=5)
+
+
+class UserPreferenceResponse(BaseModel):
+    username: str
+    theme: str
+    language: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============ Generic ============
+
+class MessageResponse(BaseModel):
+    message: str
+    detail: Optional[str] = None
+
+
+# ============ Services Discovery ============
+
+class DiscoveredServiceResponse(BaseModel):
+    slug: str
+    name: str
+    description: Optional[str] = None
+    api_url: str
+    frontend_url: Optional[str] = None
+    version: Optional[str] = None
+    status: Optional[str] = None
+    is_healthy: bool = True
+
+
+class ServiceDiscoveryResponse(BaseModel):
+    count: int
+    services: List[DiscoveredServiceResponse]
+    cached_at: Optional[str] = None
+
+
+# ============ Backup / Restore ============
+
+class BackupMetadata(BaseModel):
+    backup_id: str
+    app_slug: str
+    app_version: str
+    created_at: str
+    created_by: str
+    total_tables: int = 0
+    total_rows: int = 0
+    total_size_bytes: int = 0
+    total_size_human: str = ""
+    checksum: str = ""
+
+
+class SyncToHubRequest(BaseModel):
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+
+
+class SyncFromHubRequest(BaseModel):
+    backup_id: Optional[str] = None
+    clear_existing: bool = False
