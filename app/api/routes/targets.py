@@ -332,6 +332,7 @@ async def get_events(
     target_id: int,
     start: datetime | None = Query(None, description="Start of the range (inclusive)"),
     end: datetime | None = Query(None, description="End of the range (inclusive)"),
+    event_types: str | None = Query(None, description="Comma-separated list of event types to include (e.g. start,stop,failure)"),
     limit: int = Query(
         EVENT_PAGE_SIZE_DEFAULT,
         ge=1,
@@ -357,6 +358,10 @@ async def get_events(
         stmt = stmt.where(EventLog.created_at >= start)
     if end:
         stmt = stmt.where(EventLog.created_at <= end)
+    if event_types:
+        types_list = [t.strip() for t in event_types.split(",") if t.strip()]
+        if types_list:
+            stmt = stmt.where(EventLog.event_type.in_(types_list))
     stmt = stmt.order_by(EventLog.created_at.asc(), EventLog.id.asc()).offset(offset).limit(limit)
 
     result = await db.execute(stmt)
@@ -368,6 +373,7 @@ async def export_events(
     target_id: int,
     start: datetime | None = Query(None, description="Start of the range (inclusive)"),
     end: datetime | None = Query(None, description="End of the range (inclusive)"),
+    event_types: str | None = Query(None, description="Comma-separated list of event types to include"),
     db: AsyncSession = Depends(get_db),
 ):
     target = await db.get(MonitorTarget, target_id)
@@ -386,6 +392,10 @@ async def export_events(
         stmt = stmt.where(EventLog.created_at >= start)
     if end:
         stmt = stmt.where(EventLog.created_at <= end)
+    if event_types:
+        types_list = [t.strip() for t in event_types.split(",") if t.strip()]
+        if types_list:
+            stmt = stmt.where(EventLog.event_type.in_(types_list))
     stmt = stmt.order_by(EventLog.created_at.asc(), EventLog.id.asc())
 
     result = await db.stream(stmt)

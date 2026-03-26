@@ -15,6 +15,7 @@ import LatencyTimelineChart from '../analytics/LatencyTimelineChart'
 import LossTimelineChart from '../analytics/LossTimelineChart'
 import LogsTable from '../logs/LogsTable'
 import EventLog from '../logs/EventLog'
+import EventFilterModal from '../logs/EventFilterModal'
 import TraceroutePanel from '../network/TraceroutePanel'
 import { SkeletonCard, SkeletonTableRow } from '../common/Skeleton'
 import { useTranslation } from '../../i18n/LanguageProvider'
@@ -106,6 +107,8 @@ function TargetDetailsPage({
   const [eventsOffset, setEventsOffset] = useState(0)
   const [eventRows, setEventRows] = useState([])
   const [hasMoreEvents, setHasMoreEvents] = useState(false)
+  const [showFilterModal, setShowFilterModal] = useState(false)
+  const [isSavingFilter, setIsSavingFilter] = useState(false)
 
   useEffect(() => {
     setInsightWindow(60)
@@ -121,6 +124,8 @@ function TargetDetailsPage({
     setEventRows([])
     setHasMoreEvents(false)
     setExportEventsError('')
+    setShowFilterModal(false)
+    setIsSavingFilter(false)
     setMetadataFeedback('')
     setMetadataDraft({ url: target?.url ?? '', notes: target?.notes ?? '' })
     queryClient.removeQueries({ queryKey: ['events', target?.id] })
@@ -188,8 +193,16 @@ function TargetDetailsPage({
     refetchIntervalInBackground: false,
   })
 
+  const prefsQuery = useQuery({
+    queryKey: ['preferences'],
+    queryFn: () => apiCall('/preferences'),
+    staleTime: 300_000,
+  })
+
+  const activeEventFilter = prefsQuery.data?.event_filters?.[String(target?.id)] ?? null
+
   const eventsQuery = useQuery({
-    queryKey: ['events', target?.id, eventRangeKey, eventsOffset],
+    queryKey: ['events', target?.id, eventRangeKey, eventsOffset, activeEventFilter?.join(',')],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('limit', String(EVENT_PAGE_SIZE))
@@ -198,12 +211,15 @@ function TargetDetailsPage({
         params.set('start', eventRangeBounds.start)
         params.set('end', eventRangeBounds.end)
       }
+      if (activeEventFilter && activeEventFilter.length > 0) {
+        params.set('event_types', activeEventFilter.join(','))
+      }
       return apiCall(`/targets/${target.id}/events?${params.toString()}`)
     },
-    enabled: Boolean(target?.id),
-    staleTime: 60_000, // Events don't change often, cache for 1 minute
+    enabled: Boolean(target?.id) && !prefsQuery.isLoading,
+    staleTime: 60_000,
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: false, // Don't refetch on every focus
+    refetchOnWindowFocus: false,
     refetchInterval: false,
     refetchIntervalInBackground: false,
   })
@@ -409,6 +425,34 @@ function TargetDetailsPage({
     setEventsOffset((prev) => prev + EVENT_PAGE_SIZE)
   }, [eventsQuery.isFetching, hasMoreEvents])
 
+  const handleApplyEventFilter = useCallback(async (selectedTypes) => {
+    if (!target) return
+    setIsSavingFilter(true)
+    try {
+      const currentFilters = prefsQuery.data?.event_filters ?? {}
+      const newFilters = { ...currentFilters }
+      if (selectedTypes) {
+        newFilters[String(target.id)] = selectedTypes
+      } else {
+        delete newFilters[String(target.id)]
+      }
+      await apiCall('/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_filters: newFilters }),
+      })
+      queryClient.invalidateQueries({ queryKey: ['preferences'] })
+      setEventsOffset(0)
+      setEventRows([])
+      queryClient.invalidateQueries({ queryKey: ['events', target?.id] })
+      setShowFilterModal(false)
+    } catch {
+      // keep modal open on error
+    } finally {
+      setIsSavingFilter(false)
+    }
+  }, [apiCall, prefsQuery.data?.event_filters, queryClient, target])
+
   const handleExportEvents = useCallback(async () => {
     if (!target || !token) return
     setIsExportingEvents(true)
@@ -418,6 +462,9 @@ function TargetDetailsPage({
       if (eventRangeBounds?.start && eventRangeBounds?.end) {
         params.set('start', eventRangeBounds.start)
         params.set('end', eventRangeBounds.end)
+      }
+      if (activeEventFilter && activeEventFilter.length > 0) {
+        params.set('event_types', activeEventFilter.join(','))
       }
       const query = params.toString()
       const response = await fetch(`${API_BASE_URL}/targets/${target.id}/events/export${query ? `?${query}` : ''}`, {
@@ -774,9 +821,19 @@ function TargetDetailsPage({
             onExport={handleExportEvents}
             isExporting={isExportingEvents}
             exportError={exportEventsError}
+            onOpenSettings={() => setShowFilterModal(true)}
+            hasActiveFilter={Boolean(activeEventFilter)}
           />
         </div>
       </div>
+
+      <EventFilterModal
+        open={showFilterModal}
+        onClose={() => setShowFilterModal(false)}
+        activeFilters={activeEventFilter}
+        onApply={handleApplyEventFilter}
+        isSaving={isSavingFilter}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">

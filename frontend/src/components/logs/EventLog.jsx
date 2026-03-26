@@ -1,6 +1,6 @@
 import { useTranslation } from '../../i18n/LanguageProvider'
 import { formatDateTime } from '../../utils/formatters'
-import { Download } from 'lucide-react'
+import { Download, SlidersHorizontal } from 'lucide-react'
 
 function EventLog({
   className = '',
@@ -17,6 +17,8 @@ function EventLog({
   onExport,
   isExporting,
   exportError,
+  onOpenSettings,
+  hasActiveFilter,
 }) {
   const { t } = useTranslation()
 
@@ -75,6 +77,19 @@ function EventLog({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 bg-white px-2 py-1 rounded-full border border-slate-200">{t('history.eventsTag')}</span>
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold border px-3 py-1.5 rounded-full hover:bg-slate-100 transition ${
+                hasActiveFilter
+                  ? 'text-emerald-700 bg-emerald-50 border-emerald-300'
+                  : 'text-slate-600 bg-white border-slate-300'
+              }`}
+              title={t('history.eventSettings')}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              {hasActiveFilter && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+            </button>
             <button
               type="button"
               onClick={onExport}

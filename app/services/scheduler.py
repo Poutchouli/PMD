@@ -3,9 +3,13 @@ from datetime import datetime, timezone
 from typing import Dict
 from sqlalchemy.future import select
 
+import logging
+
 from app.db import AsyncSessionLocal
 from app.models import MonitorTarget, PingLog, EventLog
 from app.services.pinger import ping_target
+
+logger = logging.getLogger(__name__)
 
 # Number of consecutive failed pings before creating an event
 CONSECUTIVE_FAILURES_THRESHOLD = 5
@@ -86,10 +90,80 @@ class MonitorScheduler:
     async def load_existing(self):
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(MonitorTarget).where(MonitorTarget.is_active == True))
-            for target in result.scalars():
-                await self.start_for_target(target)
+            targets = list(result.scalars())
+
+        for target in targets:
+            await self._detect_disconnect(target)
+            await self.start_for_target(target)
+
+    async def _detect_disconnect(self, target: MonitorTarget) -> None:
+        """If the last event for this target is NOT a 'shutdown', the previous
+        run was killed brutally.  In that case, create a retroactive 'disconnect'
+        event timestamped at the last recorded ping."""
+        try:
+            async with AsyncSessionLocal() as session:
+                # Last event for this target
+                last_event_result = await session.execute(
+                    select(EventLog)
+                    .where(EventLog.target_id == target.id)
+                    .order_by(EventLog.created_at.desc(), EventLog.id.desc())
+                    .limit(1)
+                )
+                last_event = last_event_result.scalar_one_or_none()
+
+                # Nothing to deduce if the process shut down cleanly
+                if last_event and last_event.event_type == "shutdown":
+                    return
+
+                # No events at all means first start — nothing to deduce
+                if not last_event:
+                    return
+
+                # Find the last ping to use as disconnect timestamp
+                last_ping_result = await session.execute(
+                    select(PingLog)
+                    .where(PingLog.target_id == target.id)
+                    .order_by(PingLog.time.desc())
+                    .limit(1)
+                )
+                last_ping = last_ping_result.scalar_one_or_none()
+
+                disconnect_time = last_ping.time if last_ping else last_event.created_at
+                await self._record_event_with_timestamp(
+                    target.id,
+                    "disconnect",
+                    f"Monitoring interrupted (ungraceful shutdown) — last ping at {disconnect_time.isoformat()}",
+                    disconnect_time,
+                )
+                logger.info(
+                    "Created retroactive 'disconnect' event for target %s at %s",
+                    target.ip_address,
+                    disconnect_time.isoformat(),
+                )
+        except Exception as exc:
+            logger.warning("Failed to detect disconnect for target %s: %s", target.id, exc)
+
+    async def _record_event_with_timestamp(
+        self, target_id: int, event_type: str, message: str, created_at: datetime
+    ) -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                EventLog(
+                    target_id=target_id,
+                    event_type=event_type,
+                    message=message,
+                    created_at=created_at,
+                )
+            )
+            await session.commit()
 
     async def shutdown(self):
+        # Record a "shutdown" event for every actively monitored target
+        for target_id in list(self.tasks.keys()):
+            try:
+                await self._record_event(target_id, "shutdown", "Monitoring stopped (application shutdown)")
+            except Exception:
+                pass  # best-effort during shutdown
         for task in self.tasks.values():
             task.cancel()
         self.tasks.clear()

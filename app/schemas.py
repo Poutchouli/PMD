@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import AnyHttpUrl, BaseModel, Field, ConfigDict, field_validator
 
 from app.utils import resolve_host
@@ -188,12 +188,14 @@ class TracerouteResponse(BaseModel):
 class UserPreferenceUpdate(BaseModel):
     theme: Optional[str] = Field(None, pattern="^(light|dark|system)$")
     language: Optional[str] = Field(None, min_length=2, max_length=5)
+    event_filters: Optional[Dict[str, List[str]]] = Field(None, description="Per-target event type filters: {'<target_id>': ['start','stop',...]}")
 
 
 class UserPreferenceResponse(BaseModel):
     username: str
     theme: str
     language: str
+    event_filters: Optional[Dict[str, List[str]]] = None
     created_at: datetime
     updated_at: datetime
 

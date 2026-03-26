@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, JSON
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -61,6 +61,7 @@ class UserPreference(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     theme = Column(String(20), default="system")
     language = Column(String(5), default="fr")
+    event_filters = Column(JSON, nullable=True, default=dict)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
