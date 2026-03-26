@@ -1,8 +1,19 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, JSON
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
+
+
+class TargetGroup(Base):
+    __tablename__ = "target_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    color = Column(String(7), nullable=False, default="#6B7280")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    targets = relationship("MonitorTarget", back_populates="group", lazy="selectin")
 
 
 class MonitorTarget(Base):
@@ -14,8 +25,10 @@ class MonitorTarget(Base):
     is_active = Column(Boolean, default=True)
     display_url = Column(String(512), nullable=True)
     notes = Column(Text, nullable=True)
+    group_id = Column(Integer, ForeignKey("target_groups.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    group = relationship("TargetGroup", back_populates="targets", lazy="selectin")
     logs = relationship(
         "PingLog",
         back_populates="target",
@@ -52,6 +65,18 @@ class EventLog(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     target = relationship("MonitorTarget", back_populates="events")
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    theme = Column(String(20), default="system")
+    language = Column(String(5), default="fr")
+    event_filters = Column(JSON, nullable=True, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 # SQL TO RUN IN POSTGRES (One-time setup for TimescaleDB)

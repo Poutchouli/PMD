@@ -12,6 +12,7 @@ export function buildTimelineData(insights) {
       : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const lossRatePct = Number(((point.loss_rate ?? 0) * 100).toFixed(2))
     return {
+      bucket: point.bucket,
       label,
       fullLabel: date.toLocaleString(),
       avg: point.avg_latency_ms ?? null,
@@ -21,6 +22,34 @@ export function buildTimelineData(insights) {
       samples: point.sample_count,
     }
   })
+}
+
+const HEALTH_THRESHOLDS = {
+  healthy: { minUptime: 99, maxLoss: 1, maxLatency: 100 },
+  warning: { minUptime: 95, maxLoss: 5, maxLatency: 200 },
+}
+
+export function computeHealthStatus(insights, isActive) {
+  if (!isActive) return 'paused'
+  if (!insights || insights.sample_count === 0) return 'unknown'
+
+  const uptime = insights.uptime_percent ?? 0
+  const lossRate = insights.sample_count > 0
+    ? (insights.loss_count / insights.sample_count) * 100
+    : 0
+  const avgLatency = insights.latency_avg_ms ?? 0
+
+  const h = HEALTH_THRESHOLDS.healthy
+  if (uptime >= h.minUptime && lossRate < h.maxLoss && avgLatency < h.maxLatency) {
+    return 'healthy'
+  }
+
+  const w = HEALTH_THRESHOLDS.warning
+  if (uptime >= w.minUptime && lossRate < w.maxLoss && avgLatency < w.maxLatency) {
+    return 'warning'
+  }
+
+  return 'critical'
 }
 
 export function bucketSecondsForWindow(windowMinutes) {

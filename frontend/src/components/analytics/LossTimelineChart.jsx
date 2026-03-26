@@ -2,7 +2,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsT
 import ChartPlaceholder from '../common/ChartPlaceholder'
 import { useTranslation } from '../../i18n/LanguageProvider'
 
-function LossTimelineChart({ data, isLoading }) {
+function LossTimelineChart({ data, isLoading, onBarClick }) {
   const { t } = useTranslation()
   if (isLoading) {
     return <ChartPlaceholder message={t('placeholders.lossLoading')} heightClass="h-56" />
@@ -29,6 +29,8 @@ function LossTimelineChart({ data, isLoading }) {
             name={`${t('timeline.loss')} (%)`}
             fill="#fb923c"
             radius={[4, 4, 0, 0]}
+            cursor={onBarClick ? 'pointer' : undefined}
+            onClick={onBarClick ? (data) => onBarClick(data) : undefined}
           />
         </BarChart>
       </ResponsiveContainer>

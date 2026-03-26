@@ -3,6 +3,14 @@
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
+-- Target groups (must exist before monitor_targets FK)
+CREATE TABLE IF NOT EXISTS target_groups (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    color VARCHAR(7) NOT NULL DEFAULT '#6B7280',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Core tables (align with SQLAlchemy models)
 CREATE TABLE IF NOT EXISTS monitor_targets (
     id SERIAL PRIMARY KEY,
@@ -11,6 +19,7 @@ CREATE TABLE IF NOT EXISTS monitor_targets (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     display_url TEXT,
     notes TEXT,
+    group_id INTEGER REFERENCES target_groups(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -34,8 +43,20 @@ CREATE TABLE IF NOT EXISTS event_logs (
 -- Hypertable
 SELECT create_hypertable('ping_logs', 'time', if_not_exists => TRUE);
 
--- Index on target_id + time for fast queries
+-- Indexes
 CREATE INDEX IF NOT EXISTS idx_ping_logs_target_time ON ping_logs (target_id, time DESC);
+CREATE INDEX IF NOT EXISTS idx_event_logs_target_created_at ON event_logs (target_id, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_targets_active ON monitor_targets (id) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_targets_group ON monitor_targets (group_id);
+CREATE INDEX IF NOT EXISTS idx_event_logs_type ON event_logs (event_type);
+
+-- Compression policy: compress chunks older than 1 day (before 3-day retention)
+ALTER TABLE ping_logs SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'target_id',
+    timescaledb.compress_orderby = 'time DESC'
+);
+SELECT add_compression_policy('ping_logs', INTERVAL '1 day', if_not_exists => TRUE);
 
 -- Continuous aggregates
 DROP MATERIALIZED VIEW IF EXISTS ping_minute;
@@ -64,11 +85,11 @@ SELECT time_bucket('1 hour', time) AS bucket,
 FROM ping_logs
 GROUP BY bucket, target_id;
 
--- Policies: refresh + retention
+-- Policies: refresh + retention (2-min refresh for near-real-time dashboard)
 SELECT add_continuous_aggregate_policy('ping_minute',
     start_offset => INTERVAL '3 days',
     end_offset   => INTERVAL '1 minute',
-    schedule_interval => INTERVAL '5 minutes'
+    schedule_interval => INTERVAL '2 minutes'
 );
 
 SELECT add_continuous_aggregate_policy('ping_hour',

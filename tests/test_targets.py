@@ -3,9 +3,6 @@ import asyncio
 from datetime import datetime, timezone
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_pingmedaddy.db"
-os.environ["ADMIN_USERNAME"] = "admin"
-os.environ["ADMIN_PASSWORD"] = "changeme"
-os.environ["AUTH_SECRET"] = "test-secret"
 os.environ["CORS_ORIGINS"] = "http://test"
 
 import pytest
@@ -19,6 +16,8 @@ from app.services import scheduler as scheduler_service  # noqa: E402
 from app.services import traceroute as traceroute_service  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.models import Base  # noqa: E402
+from app.hub_auth import get_current_user  # noqa: E402
+from tests.conftest import create_mock_token  # noqa: E402
 
 @pytest.mark.asyncio
 async def test_create_pause_resume_flow(monkeypatch):
@@ -51,6 +50,8 @@ async def test_create_pause_resume_flow(monkeypatch):
     await scheduler_service.scheduler.shutdown()
 
     app = create_app()
+    mock_user = create_mock_token()
+    app.dependency_overrides[get_current_user] = lambda: mock_user
     transport = httpx.ASGITransport(app=app)
 
     async with engine.begin() as conn:
@@ -58,13 +59,7 @@ async def test_create_pause_resume_flow(monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        login_resp = await client.post(
-            "/auth/login",
-            json={"username": os.environ["ADMIN_USERNAME"], "password": os.environ["ADMIN_PASSWORD"]},
-        )
-        assert login_resp.status_code == 200
-        token = login_resp.json()["access_token"]
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = {"Authorization": "Bearer mock_token"}
 
         resp = await client.post(
             "/targets/", json={"ip": "192.168.1.254", "frequency": 1}, headers=headers
@@ -150,6 +145,35 @@ async def test_create_pause_resume_flow(monkeypatch):
         assert any(e["event_type"] == "start" for e in events)
 
         resp = await client.get(
+            f"/targets/{target_id}/events",
+            params={"limit": 1, "offset": 0},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        first_page = resp.json()
+        assert len(first_page) == 1
+
+        resp = await client.get(
+            f"/targets/{target_id}/events",
+            params={"limit": 1, "offset": 1},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        second_page = resp.json()
+        assert len(second_page) == 1
+        assert second_page[0]["id"] != first_page[0]["id"]
+
+        resp = await client.get(
+            f"/targets/{target_id}/events/export",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/csv")
+        events_csv_lines = resp.text.strip().splitlines()
+        assert events_csv_lines[0].startswith("timestamp_utc,target_id,target_ip,event_type,message,source")
+        assert len(events_csv_lines) >= 2
+
+        resp = await client.get(
             f"/targets/{target_id}/insights",
             headers=headers,
         )
@@ -172,3 +196,93 @@ async def test_create_pause_resume_flow(monkeypatch):
         assert resp.status_code == 200
         targets = resp.json()
         assert all(t["id"] != target_id for t in targets)
+
+
+@pytest.mark.asyncio
+async def test_create_target_with_hostname(monkeypatch):
+    """Creating a target with a domain name should resolve it to an IP."""
+    async def fake_ping(ip: str):
+        return 10.0, 5, False
+
+    monkeypatch.setattr(pinger, "ping_target", fake_ping)
+    monkeypatch.setattr(scheduler_service, "ping_target", fake_ping)
+
+    # Mock DNS resolution: "my-router.local" -> "10.99.0.1"
+    import app.utils as utils_module
+    original_resolve = utils_module.resolve_host
+
+    def fake_resolve(value):
+        if value == "my-router.local":
+            return "10.99.0.1"
+        return original_resolve(value)
+
+    monkeypatch.setattr(utils_module, "resolve_host", fake_resolve)
+
+    # Also patch the schema-level import so Pydantic validators use the mock
+    import app.schemas as schemas_module
+    monkeypatch.setattr(schemas_module, "resolve_host", fake_resolve)
+
+    await scheduler_service.scheduler.shutdown()
+    app = create_app()
+    mock_user = create_mock_token()
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    transport = httpx.ASGITransport(app=app)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        headers = {"Authorization": "Bearer mock_token"}
+
+        resp = await client.post(
+            "/targets/", json={"ip": "my-router.local", "frequency": 5}, headers=headers
+        )
+        assert resp.status_code == 200
+        assert "10.99.0.1" in resp.json()["message"]
+
+        # Verify the target was stored with the resolved IP
+        resp = await client.get("/targets/", headers=headers)
+        assert resp.status_code == 200
+        targets = resp.json()
+        assert any(t["ip"] == "10.99.0.1" for t in targets)
+
+
+@pytest.mark.asyncio
+async def test_create_target_with_invalid_hostname(monkeypatch):
+    """Creating a target with an unresolvable hostname should return 422."""
+    async def fake_ping(ip: str):
+        return 10.0, 5, False
+
+    monkeypatch.setattr(pinger, "ping_target", fake_ping)
+    monkeypatch.setattr(scheduler_service, "ping_target", fake_ping)
+
+    # Mock DNS resolution to always fail for unknown hosts
+    import app.utils as utils_module
+    import app.schemas as schemas_module
+
+    def fail_resolve(value):
+        raise ValueError(f"Cannot resolve hostname: {value}")
+
+    monkeypatch.setattr(utils_module, "resolve_host", fail_resolve)
+    monkeypatch.setattr(schemas_module, "resolve_host", fail_resolve)
+
+    await scheduler_service.scheduler.shutdown()
+    app = create_app()
+    mock_user = create_mock_token()
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    transport = httpx.ASGITransport(app=app)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        headers = {"Authorization": "Bearer mock_token"}
+
+        resp = await client.post(
+            "/targets/", json={"ip": "nonexistent.invalid.host", "frequency": 5}, headers=headers
+        )
+        assert resp.status_code == 422
+
+    app.dependency_overrides.clear()

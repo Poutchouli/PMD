@@ -3,7 +3,10 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.jsx'
+import ErrorBoundary from './components/common/ErrorBoundary'
 import { LanguageProvider } from './i18n/LanguageProvider'
+import { ConfigProvider } from './context/ConfigContext'
+import { AuthProvider } from './context/AuthContext'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,9 +21,15 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <LanguageProvider>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
+      <ConfigProvider>
+        <AuthProvider>
+          <QueryClientProvider client={queryClient}>
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
+          </QueryClientProvider>
+        </AuthProvider>
+      </ConfigProvider>
     </LanguageProvider>
   </StrictMode>,
 )

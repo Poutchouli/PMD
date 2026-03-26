@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
   ArrowLeft,
-  ChevronRight,
   Download,
   ExternalLink,
   FileSpreadsheet,
+  FolderOpen,
   Globe,
   LogOut,
   Plus,
@@ -17,33 +18,43 @@ import {
 } from 'lucide-react'
 import LoginScreen from './components/auth/LoginScreen'
 import LanguageSelector from './components/common/LanguageSelector'
+import TargetCard from './components/dashboard/TargetCard'
+import TargetCardSkeleton from './components/dashboard/TargetCardSkeleton'
 import TargetDetailsPage from './components/details/TargetDetailsPage'
 import { useTranslation } from './i18n/LanguageProvider'
-import { formatLatency, formatPercent } from './utils/formatters'
+import { useAuth } from './context/AuthContext'
+import { useConfig } from './context/ConfigContext'
 import { bucketSecondsForWindow } from './utils/insights'
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:6666'
 const POLL_INTERVAL = 3000
 const DASHBOARD_INSIGHTS_REFRESH_MS = 60_000
+const TARGETS_CACHE_KEY = 'pmd_targets_cache'
 
-const createEmptyTargetForm = () => ({ ip: '', frequency: 5, url: '', notes: '' })
+const createEmptyTargetForm = () => ({ ip: '', frequency: 5, url: '', notes: '', group_id: '' })
+
+function readCachedTargets() {
+  try {
+    const raw = localStorage.getItem(TARGETS_CACHE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return parsed
+    }
+  } catch { /* ignore corrupt cache */ }
+  return []
+}
 
 function App() {
   const { t } = useTranslation()
+  const { token, isAuthenticated, logout: hubLogout, authFetch } = useAuth()
+  const { apiUrl } = useConfig()
+  const queryClient = useQueryClient()
   const [view, setView] = useState('dashboard')
-  const [targets, setTargets] = useState([])
+  const [targets, setTargets] = useState(() => readCachedTargets())
+  const [targetsLoaded, setTargetsLoaded] = useState(false)
   const [selectedId, setSelectedId] = useState(null)
   const [form, setForm] = useState(() => createEmptyTargetForm())
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
-  const [token, setToken] = useState(() => {
-    if (typeof window === 'undefined') return null
-    return window.localStorage.getItem('pmd_token')
-  })
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
-  const [loginError, setLoginError] = useState('')
-  const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [insightsMap, setInsightsMap] = useState({})
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false)
   const [isDownloadingTargetsCsv, setIsDownloadingTargetsCsv] = useState(false)
@@ -53,12 +64,13 @@ function App() {
   const [importError, setImportError] = useState('')
   const [importFilename, setImportFilename] = useState('')
   const [detailRefreshSignal, setDetailRefreshSignal] = useState(0)
+  const [groups, setGroups] = useState([])
+  const [selectedGroupId, setSelectedGroupId] = useState(null)
 
   const insightsMapRef = useRef({})
   const insightFreshnessRef = useRef({})
   const lastDashboardInsightsRef = useRef(0)
   const importFileRef = useRef(null)
-  const isAuthenticated = Boolean(token)
 
   const currentTarget = useMemo(
     () => targets.find((target) => target.id === selectedId) ?? null,
@@ -67,55 +79,21 @@ function App() {
 
   const logout = useCallback(
     (message) => {
-      if (typeof window !== 'undefined') {
-        window.localStorage.removeItem('pmd_token')
-      }
-      setToken(null)
       setView('dashboard')
       setSelectedId(null)
       setTargets([])
+      setTargetsLoaded(false)
       setInsightsMap({})
       insightsMapRef.current = {}
       insightFreshnessRef.current = {}
+      try { localStorage.removeItem(TARGETS_CACHE_KEY) } catch { /* ignore */ }
       if (message) {
         setError(message)
       }
+      hubLogout()
     },
-    [],
+    [hubLogout],
   )
-
-  const handleLoginSubmit = async (event) => {
-    event.preventDefault()
-    if (isLoggingIn) return
-    setIsLoggingIn(true)
-    setLoginError('')
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: loginForm.username.trim(),
-          password: loginForm.password,
-        }),
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok || !payload?.access_token) {
-        throw new Error(payload?.detail ?? t('auth.invalidCredentials'))
-      }
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('pmd_token', payload.access_token)
-      }
-      setToken(payload.access_token)
-      setLoginForm({ username: '', password: '' })
-      setLoginError('')
-      setError('')
-    } catch (err) {
-      setLoginError(err.message ?? t('auth.genericError'))
-    } finally {
-      setIsLoggingIn(false)
-      setLoginForm((prev) => ({ ...prev, password: '' }))
-    }
-  }
 
   const apiCall = useCallback(
     async (endpoint, options = {}) => {
@@ -123,12 +101,7 @@ function App() {
         throw new Error(t('auth.notAuthenticated'))
       }
       try {
-        const headers = new Headers(options.headers ?? {})
-        headers.set('Authorization', `Bearer ${token}`)
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-          ...options,
-          headers,
-        })
+        const response = await authFetch(endpoint, options)
         if (response.status === 401) {
           logout(t('alerts.sessionExpired'))
           throw new Error(t('alerts.sessionExpired'))
@@ -138,6 +111,10 @@ function App() {
           try {
             const data = await response.json()
             detail = data?.detail
+            // Pydantic 422 returns detail as an array of error objects
+            if (Array.isArray(detail)) {
+              detail = detail.map((e) => e.msg || JSON.stringify(e)).join('; ')
+            }
           } catch (err) {
             // ignore JSON errors
           }
@@ -149,12 +126,14 @@ function App() {
       } catch (err) {
         console.error('API Error:', err)
         if (!String(err.message).includes(t('alerts.sessionExpired'))) {
-          setError(t('alerts.apiUnavailable'))
+          // Show the actual backend error for HTTP failures, generic message for network errors
+          const isNetworkError = err instanceof TypeError || err.message === 'Failed to fetch'
+          setError(isNetworkError ? t('alerts.apiUnavailable') : err.message)
         }
         throw err
       }
     },
-    [logout, t, token],
+    [authFetch, logout, t, token],
   )
 
   const updateInsightsState = useCallback((targetId, data) => {
@@ -210,12 +189,22 @@ function App() {
     [updateInsights],
   )
 
+  const loadGroups = useCallback(async () => {
+    if (!token) return
+    try {
+      const result = await apiCall('/groups/')
+      setGroups(result)
+    } catch { /* handled in apiCall */ }
+  }, [apiCall, token])
+
   const loadTargets = useCallback(async () => {
     if (!token) return
     try {
       const result = await apiCall('/targets/')
       result.sort((a, b) => a.id - b.id)
       setTargets(result)
+      setTargetsLoaded(true)
+      try { localStorage.setItem(TARGETS_CACHE_KEY, JSON.stringify(result)) } catch { /* quota */ }
       await refreshDashboardInsights(result)
       if (selectedId && !result.some((target) => target.id === selectedId)) {
         setSelectedId(null)
@@ -238,12 +227,13 @@ function App() {
   useEffect(() => {
     if (!token) return
     loadTargets()
-  }, [loadTargets, token])
+    loadGroups()
+  }, [loadTargets, loadGroups, token])
 
   useEffect(() => {
     if (!token) return undefined
     const interval = setInterval(() => {
-      if (view === 'dashboard') {
+      if (view === 'dashboard' && document.visibilityState === 'visible') {
         loadTargets()
       }
     }, POLL_INTERVAL)
@@ -266,6 +256,9 @@ function App() {
       if (notesValue) {
         payload.notes = notesValue
       }
+      if (form.group_id) {
+        payload.group_id = Number(form.group_id)
+      }
       await apiCall('/targets/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -273,6 +266,7 @@ function App() {
       })
       setForm(createEmptyTargetForm())
       await loadTargets()
+      await loadGroups()
       setView('dashboard')
     } catch (err) {
       // already surfaced
@@ -284,8 +278,28 @@ function App() {
   const handleSelectTarget = (id) => {
     setSelectedId(id)
     setView('details')
-    setDetailRefreshSignal(Date.now())
   }
+
+  const prefetchTarget = useCallback(
+    (targetId) => {
+      queryClient.prefetchQuery({
+        queryKey: ['logs', targetId],
+        queryFn: () => apiCall(`/targets/${targetId}/logs?limit=${50}`),
+        staleTime: 5_000,
+      })
+      queryClient.prefetchQuery({
+        queryKey: ['insights', targetId, 'window-60'],
+        queryFn: () => {
+          const params = new URLSearchParams()
+          params.set('window_minutes', '60')
+          params.set('bucket_seconds', String(bucketSecondsForWindow(60)))
+          return apiCall(`/targets/${targetId}/insights?${params.toString()}`)
+        },
+        staleTime: 10_000,
+      })
+    },
+    [apiCall, queryClient],
+  )
 
   const handleTargetUpdated = useCallback((updatedTarget) => {
     setTargets((prev) => prev.map((target) => (target.id === updatedTarget.id ? updatedTarget : target)))
@@ -341,11 +355,7 @@ function App() {
       if (!token) return
       setLoading(true)
       try {
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
+        const response = await authFetch(endpoint)
         if (response.status === 401) {
           logout(t('alerts.sessionExpired'))
           throw new Error(t('alerts.sessionExpired'))
@@ -373,7 +383,7 @@ function App() {
         setLoading(false)
       }
     },
-    [logout, t, token],
+    [authFetch, logout, t, token],
   )
 
   const handleDownloadTemplate = useCallback(async () => {
@@ -407,11 +417,8 @@ function App() {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const response = await fetch(`${API_BASE_URL}/targets/import`, {
+      const response = await authFetch(`/targets/import`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
         body: formData,
       })
       if (response.status === 401) {
@@ -445,15 +452,7 @@ function App() {
   }, [loadTargets, logout, t, token])
 
   if (!isAuthenticated) {
-    return (
-      <LoginScreen
-        form={loginForm}
-        onChange={setLoginForm}
-        onSubmit={handleLoginSubmit}
-        error={loginError}
-        isLoading={isLoggingIn}
-      />
-    )
+    return <LoginScreen />
   }
 
   return (
@@ -536,86 +535,86 @@ function App() {
               </button>
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="px-6 py-4 w-24">{t('dashboard.table.state')}</th>
-                      <th className="px-6 py-4">{t('dashboard.table.address')}</th>
-                      <th className="px-6 py-4">{t('dashboard.table.frequency')}</th>
-                      <th className="px-6 py-4">{t('dashboard.table.lastActivity')}</th>
-                      <th className="px-6 py-4 text-right">{t('dashboard.table.action')}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {targets.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="p-12 text-center">
-                          <div className="flex flex-col items-center text-slate-500 gap-3">
-                            <Server className="w-10 h-10 text-slate-300" />
-                            <p>{t('dashboard.emptyState')}</p>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    {targets.map((target) => {
-                      const rowInsights = insightsMap[target.id]
-                      return (
-                        <tr
-                          key={target.id}
-                          className={`hover:bg-slate-50 cursor-pointer border-l-4 transition-colors ${target.is_active ? 'border-l-emerald-500' : 'border-l-transparent'}`}
-                          onClick={() => handleSelectTarget(target.id)}
-                        >
-                          <td className="px-6 py-4">
-                            {target.is_active ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 uppercase tracking-wide">
-                                {t('dashboard.statusActive')}
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase tracking-wide">
-                                {t('dashboard.statusPaused')}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="font-bold text-slate-700 text-base flex items-center gap-2">
-                              <span>{target.ip}</span>
-                              {target.url && (
-                                <a
-                                  href={target.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-emerald-600 hover:text-emerald-700 text-xs font-semibold inline-flex items-center gap-1"
-                                  onClick={(event) => event.stopPropagation()}
-                                  title={t('dashboard.openInterface')}
-                                  aria-label={t('dashboard.openInterface')}
-                                >
-                                  {t('dashboard.openInterface')}
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-500 mt-1">
-                              {rowInsights
-                                ? `${formatLatency(rowInsights.latency_avg_ms)} • ${t('insights.cards.uptime')} ${formatPercent(rowInsights.uptime_percent)}`
-                                : t('dashboard.metricsLoading')}
-                            </p>
-                          </td>
-                          <td className="px-6 py-4 text-slate-500 font-mono text-xs">{target.frequency}s</td>
-                          <td className="px-6 py-4 text-slate-400 text-xs">
-                            {new Date(target.created_at).toLocaleDateString()}
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <ChevronRight className="w-5 h-5 text-slate-300 inline-block" />
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+            {groups.length > 0 && (
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <FolderOpen className="w-4 h-4 text-slate-400" />
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(null)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedGroupId === null
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {t('groups.all')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(0)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedGroupId === 0
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {t('groups.noGroup')}
+                </button>
+                {groups.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => setSelectedGroupId(g.id)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      selectedGroupId === g.id
+                        ? 'text-white'
+                        : 'text-slate-600 hover:opacity-80'
+                    }`}
+                    style={{
+                      backgroundColor: selectedGroupId === g.id ? (g.color || '#1e293b') : `${g.color || '#e2e8f0'}30`,
+                      borderWidth: '1px',
+                      borderColor: g.color || '#e2e8f0',
+                    }}
+                  >
+                    {g.name}
+                  </button>
+                ))}
               </div>
-            </div>
+            )}
+
+            {targets.length === 0 && !targetsLoaded && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => <TargetCardSkeleton key={i} />)}
+              </div>
+            )}
+            {targets.length === 0 && targetsLoaded && (
+              <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-12 text-center">
+                <div className="flex flex-col items-center text-slate-500 gap-3">
+                  <Server className="w-10 h-10 text-slate-300" />
+                  <p>{t('dashboard.emptyState')}</p>
+                </div>
+              </div>
+            )}
+            {targets.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {targets
+                  .filter((target) => {
+                    if (selectedGroupId === null) return true
+                    if (selectedGroupId === 0) return !target.group_id
+                    return target.group_id === selectedGroupId
+                  })
+                  .map((target) => (
+                  <TargetCard
+                    key={target.id}
+                    target={target}
+                    insights={insightsMap[target.id] ?? null}
+                    onSelect={handleSelectTarget}
+                    onPrefetch={prefetchTarget}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -679,6 +678,21 @@ function App() {
                     />
                   </div>
                 </div>
+                {groups.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">{t('groups.selectGroup')}</label>
+                    <select
+                      className="w-full border border-slate-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-200 focus:border-slate-400 outline-none transition-all"
+                      value={form.group_id}
+                      onChange={(event) => setForm((prev) => ({ ...prev, group_id: event.target.value }))}
+                    >
+                      <option value="">{t('groups.none')}</option>
+                      {groups.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">{t('create.notesLabel')}</label>
                   <textarea
@@ -787,6 +801,7 @@ function App() {
             target={currentTarget}
             token={token}
             apiCall={apiCall}
+            groups={groups}
             onBack={() => {
               setView('dashboard')
               setSelectedId(null)

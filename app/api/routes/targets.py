@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import ipaddress
 from datetime import datetime, timezone
 from io import StringIO
 from typing import List
@@ -13,7 +12,8 @@ from sqlalchemy.future import select
 from pydantic import ValidationError
 
 from app.db import get_db
-from app.models import MonitorTarget, PingLog, EventLog
+from app.models import MonitorTarget, PingLog, EventLog, TargetGroup
+from app.utils import resolve_host
 from app.schemas import (
     TargetCreate,
     TargetOut,
@@ -29,11 +29,13 @@ from app.schemas import (
 from app.services.scheduler import scheduler
 from app.services.stats import MAX_SAMPLES, compute_target_insights
 from app.services import traceroute as traceroute_service
-from app.security import require_auth
+from app.hub_auth import get_current_user
 
-router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(get_current_user)])
 
-TARGET_CSV_FIELDS = ["ip", "frequency", "url", "notes", "is_active"]
+TARGET_CSV_FIELDS = ["ip", "frequency", "url", "notes", "is_active", "group"]
+EVENT_PAGE_SIZE_DEFAULT = 500
+EVENT_PAGE_SIZE_MAX = 5_000
 
 
 def _to_target_out(target: MonitorTarget) -> TargetOut:
@@ -45,6 +47,9 @@ def _to_target_out(target: MonitorTarget) -> TargetOut:
         created_at=target.created_at,
         url=target.display_url,
         notes=target.notes,
+        group_id=target.group_id,
+        group_name=target.group.name if target.group else None,
+        group_color=target.group.color if target.group else None,
     )
 
 
@@ -56,8 +61,8 @@ async def download_import_template():
         buffer = StringIO()
         writer = csv.writer(buffer)
         writer.writerow(TARGET_CSV_FIELDS)
-        writer.writerow(["192.0.2.10", 5, "https://router.local", "Edge router", True])
-        writer.writerow(["198.51.100.8", 30, "", "Backup link", False])
+        writer.writerow(["192.0.2.10", 5, "https://router.local", "Edge router", True, "Routers"])
+        writer.writerow(["198.51.100.8", 30, "", "Backup link", False, ""])
         yield buffer.getvalue()
 
     headers = {"Content-Disposition": "attachment; filename=pingmedaddy-targets-template.csv"}
@@ -84,6 +89,7 @@ async def export_targets(db: AsyncSession = Depends(get_db)):
                     target.display_url or "",
                     target.notes or "",
                     target.is_active,
+                    target.group.name if target.group else "",
                 ]
             )
             yield buffer.getvalue()
@@ -107,12 +113,18 @@ async def import_targets(file: UploadFile = File(...), db: AsyncSession = Depend
         raise HTTPException(status_code=400, detail="CSV header is required")
 
     normalized_headers = [h.strip().lower() for h in reader.fieldnames if h]
-    missing = [field for field in TARGET_CSV_FIELDS if field not in normalized_headers]
+    # group column is optional in imports
+    required_fields = [f for f in TARGET_CSV_FIELDS if f != "group"]
+    missing = [field for field in required_fields if field not in normalized_headers]
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing)}")
 
     existing_ips_result = await db.execute(select(MonitorTarget.ip_address))
     existing_ips = {ip for (ip,) in existing_ips_result.all()}
+
+    # Pre-load existing groups for resolving group names
+    groups_result = await db.execute(select(TargetGroup))
+    groups_by_name = {g.name.lower(): g for g in groups_result.scalars().all()}
 
     created_targets: List[MonitorTarget] = []
     skipped_existing = 0
@@ -146,14 +158,15 @@ async def import_targets(file: UploadFile = File(...), db: AsyncSession = Depend
             "url": data.get("url"),
             "notes": data.get("notes"),
             "is_active": parse_bool(data.get("is_active", "true")),
+            "group": data.get("group") or None,
         }
         if not payload["ip"]:
             errors.append(f"Row {idx}: ip is required")
             continue
         try:
-            payload["ip"] = str(ipaddress.ip_address(payload["ip"]))
+            payload["ip"] = resolve_host(payload["ip"])
         except ValueError:
-            errors.append(f"Row {idx}: invalid IP {payload['ip']}")
+            errors.append(f"Row {idx}: invalid host {payload['ip']}")
             continue
         if payload["ip"] in existing_ips or any(t.ip_address == payload["ip"] for t in created_targets):
             skipped_existing += 1
@@ -172,6 +185,16 @@ async def import_targets(file: UploadFile = File(...), db: AsyncSession = Depend
             notes=parsed.notes,
             is_active=parsed.is_active,
         )
+        # Resolve group name to group_id (create if missing)
+        group_name = parsed.group.strip() if parsed.group else None
+        if group_name:
+            group_key = group_name.lower()
+            if group_key not in groups_by_name:
+                new_group = TargetGroup(name=group_name)
+                db.add(new_group)
+                await db.flush()
+                groups_by_name[group_key] = new_group
+            target.group_id = groups_by_name[group_key].id
         db.add(target)
         created_targets.append(target)
 
@@ -200,6 +223,7 @@ async def add_target(payload: TargetCreate, db: AsyncSession = Depends(get_db)):
         frequency=payload.frequency,
         display_url=str(payload.url) if payload.url else None,
         notes=payload.notes,
+        group_id=payload.group_id,
     )
     db.add(target)
     await db.commit()
@@ -210,8 +234,14 @@ async def add_target(payload: TargetCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/", response_model=List[TargetOut])
-async def list_targets(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(MonitorTarget))
+async def list_targets(
+    group_id: int | None = Query(None, description="Filter by group ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(MonitorTarget)
+    if group_id is not None:
+        stmt = stmt.where(MonitorTarget.group_id == group_id)
+    result = await db.execute(stmt)
     return [_to_target_out(t) for t in result.scalars().all()]
 
 
@@ -229,6 +259,9 @@ async def update_target(target_id: int, payload: TargetUpdate, db: AsyncSession 
 
     if "notes" in payload.model_fields_set:
         target.notes = payload.notes
+
+    if "group_id" in payload.model_fields_set:
+        target.group_id = payload.group_id
 
     await db.commit()
     await db.refresh(target)
@@ -330,9 +363,54 @@ async def get_events(
     target_id: int,
     start: datetime | None = Query(None, description="Start of the range (inclusive)"),
     end: datetime | None = Query(None, description="End of the range (inclusive)"),
-    limit: int = Query(500, ge=1, le=5_000, description="Maximum number of events to return"),
+    event_types: str | None = Query(None, description="Comma-separated list of event types to include (e.g. start,stop,failure)"),
+    limit: int = Query(
+        EVENT_PAGE_SIZE_DEFAULT,
+        ge=1,
+        le=EVENT_PAGE_SIZE_MAX,
+        description="Maximum number of events to return",
+    ),
+    offset: int = Query(0, ge=0, description="Offset used for pagination from oldest to newest"),
     db: AsyncSession = Depends(get_db),
 ):
+    if start and start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end and end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if start and end and start >= end:
+        raise HTTPException(status_code=400, detail="start must be before end")
+
+    target = await db.get(MonitorTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    stmt = select(EventLog).where(EventLog.target_id == target_id)
+    if start:
+        stmt = stmt.where(EventLog.created_at >= start)
+    if end:
+        stmt = stmt.where(EventLog.created_at <= end)
+    if event_types:
+        types_list = [t.strip() for t in event_types.split(",") if t.strip()]
+        if types_list:
+            stmt = stmt.where(EventLog.event_type.in_(types_list))
+    stmt = stmt.order_by(EventLog.created_at.asc(), EventLog.id.asc()).offset(offset).limit(limit)
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.get("/{target_id}/events/export")
+async def export_events(
+    target_id: int,
+    start: datetime | None = Query(None, description="Start of the range (inclusive)"),
+    end: datetime | None = Query(None, description="End of the range (inclusive)"),
+    event_types: str | None = Query(None, description="Comma-separated list of event types to include"),
+    db: AsyncSession = Depends(get_db),
+):
+    target = await db.get(MonitorTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
     if start and start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     if end and end.tzinfo is None:
@@ -345,11 +423,60 @@ async def get_events(
         stmt = stmt.where(EventLog.created_at >= start)
     if end:
         stmt = stmt.where(EventLog.created_at <= end)
-    stmt = stmt.order_by(EventLog.created_at.desc()).limit(limit)
+    if event_types:
+        types_list = [t.strip() for t in event_types.split(",") if t.strip()]
+        if types_list:
+            stmt = stmt.where(EventLog.event_type.in_(types_list))
+    stmt = stmt.order_by(EventLog.created_at.asc(), EventLog.id.asc())
 
-    result = await db.execute(stmt)
-    events = list(result.scalars().all())
-    return list(reversed(events))
+    result = await db.stream(stmt)
+    exported_at = datetime.now(timezone.utc).isoformat()
+
+    async def csv_rows():
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+
+        writer.writerow(
+            [
+                "timestamp_utc",
+                "target_id",
+                "target_ip",
+                "event_type",
+                "message",
+                "source",
+                "export_generated_at",
+                "window_start",
+                "window_end",
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        for_export_start = start.isoformat() if start else ""
+        for_export_end = end.isoformat() if end else ""
+
+        async for event in result.scalars():
+            writer.writerow(
+                [
+                    event.created_at.isoformat(),
+                    event.target_id,
+                    target.ip_address,
+                    event.event_type,
+                    event.message,
+                    "scheduler",
+                    exported_at,
+                    for_export_start,
+                    for_export_end,
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    filename = f"pingmedaddy-target-{target.id}-events.csv"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(csv_rows(), media_type="text/csv", headers=headers)
 
 
 @router.get("/{target_id}/insights", response_model=TargetInsights)
