@@ -197,7 +197,7 @@ function TargetDetailsPage({
 
   const prefsQuery = useQuery({
     queryKey: ['preferences'],
-    queryFn: () => apiCall('/preferences'),
+    queryFn: () => apiCall('/api/preferences'),
     staleTime: 300_000,
   })
 
@@ -439,7 +439,7 @@ function TargetDetailsPage({
       } else {
         delete newFilters[String(target.id)]
       }
-      await apiCall('/preferences', {
+      await apiCall('/api/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event_filters: newFilters }),
