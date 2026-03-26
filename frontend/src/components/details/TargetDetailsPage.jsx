@@ -22,6 +22,7 @@ import { buildTimelineData, bucketSecondsForWindow } from '../../utils/insights'
 import config from '../../config'
 
 const LOG_LIMIT = 50
+const EVENT_PAGE_SIZE = 500
 const POLL_INTERVAL = 3000
 const DETAIL_INSIGHTS_REFRESH_MS = 15_000
 
@@ -30,6 +31,15 @@ const WINDOW_PRESETS = [
   { label: '1 h', value: 60 },
   { label: '4 h', value: 240 },
   { label: '24 h', value: 1440 },
+  { label: '7 j', value: 10080 },
+  { label: '30 j', value: 43200 },
+]
+
+const EVENT_WINDOW_PRESETS = [
+  { labelKey: 'history.all', value: 'all' },
+  { labelKey: 'history.last24h', value: 1440 },
+  { labelKey: 'history.last7d', value: 10080 },
+  { labelKey: 'history.last30d', value: 43200 },
 ]
 
 const API_BASE_URL = config.apiUrl
@@ -75,9 +85,16 @@ function TargetDetailsPage({
   const [isSavingMetadata, setIsSavingMetadata] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState('')
+  const [isExportingEvents, setIsExportingEvents] = useState(false)
+  const [exportEventsError, setExportEventsError] = useState('')
   const [traceError, setTraceError] = useState('')
   const [isTracing, setIsTracing] = useState(false)
   const [traceResult, setTraceResult] = useState(null)
+  const [eventRangePreset, setEventRangePreset] = useState('all')
+  const [eventRangeBounds, setEventRangeBounds] = useState(null)
+  const [eventsOffset, setEventsOffset] = useState(0)
+  const [eventRows, setEventRows] = useState([])
+  const [hasMoreEvents, setHasMoreEvents] = useState(false)
 
   useEffect(() => {
     setInsightWindow(60)
@@ -87,6 +104,12 @@ function TargetDetailsPage({
     setRangeError('')
     setTraceResult(null)
     setTraceError('')
+    setEventRangePreset('all')
+    setEventRangeBounds(null)
+    setEventsOffset(0)
+    setEventRows([])
+    setHasMoreEvents(false)
+    setExportEventsError('')
     setMetadataFeedback('')
     setMetadataDraft({ url: target?.url ?? '', notes: target?.notes ?? '' })
     queryClient.removeQueries({ queryKey: ['logs', target?.id] })
@@ -108,6 +131,11 @@ function TargetDetailsPage({
     return `window-${insightWindow}`
   }, [customRange, insightWindow])
 
+  const eventRangeKey = useMemo(() => {
+    if (!eventRangeBounds) return 'all'
+    return `${eventRangeBounds.start}-${eventRangeBounds.end}`
+  }, [eventRangeBounds])
+
   const logsQuery = useQuery({
     queryKey: ['logs', target?.id],
     queryFn: async () => apiCall(`/targets/${target.id}/logs?limit=${LOG_LIMIT}`),
@@ -121,13 +149,6 @@ function TargetDetailsPage({
     },
     refetchIntervalInBackground: false,
   })
-
-  // Check if last 5 pings have issues (packet loss) - only refresh events when there are problems
-  const hasRecentIssues = useMemo(() => {
-    const recentLogs = logsQuery.data?.slice(0, 5) ?? []
-    if (recentLogs.length === 0) return false
-    return recentLogs.some((log) => log.packet_loss)
-  }, [logsQuery.data])
 
   const insightsQuery = useQuery({
     queryKey: ['insights', target?.id, insightKey],
@@ -155,42 +176,49 @@ function TargetDetailsPage({
     refetchIntervalInBackground: false,
   })
 
-  // Stabilize the window boundaries to prevent unnecessary refetches
-  // Only update when window preset or custom range changes, not on every insights refresh
-  const stableEventWindow = useMemo(() => {
-    if (!insightsQuery.data?.window_start || !insightsQuery.data?.window_end) return null
-    return {
-      start: insightsQuery.data.window_start,
-      end: insightsQuery.data.window_end,
-    }
-  }, [insightKey, Boolean(insightsQuery.data)]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const eventsQuery = useQuery({
-    queryKey: ['events', target?.id, insightKey],
+    queryKey: ['events', target?.id, eventRangeKey, eventsOffset],
     queryFn: async () => {
       const params = new URLSearchParams()
-      params.set('start', stableEventWindow.start)
-      params.set('end', stableEventWindow.end)
+      params.set('limit', String(EVENT_PAGE_SIZE))
+      params.set('offset', String(eventsOffset))
+      if (eventRangeBounds?.start && eventRangeBounds?.end) {
+        params.set('start', eventRangeBounds.start)
+        params.set('end', eventRangeBounds.end)
+      }
       return apiCall(`/targets/${target.id}/events?${params.toString()}`)
     },
-    enabled: Boolean(target?.id && stableEventWindow),
+    enabled: Boolean(target?.id),
     staleTime: 60_000, // Events don't change often, cache for 1 minute
     refetchOnWindowFocus: false, // Don't refetch on every focus
-    // Only poll for events when there are recent issues (last 5 pings have problems)
-    refetchInterval: () => {
-      if (!target?.is_active) return false
-      if (!isVisible) return false
-      if (!hasRecentIssues) return false // Only refetch if there are recent issues
-      return 30_000 // Check every 30s when there are issues
-    },
+    refetchInterval: false,
     refetchIntervalInBackground: false,
   })
+
+  useEffect(() => {
+    if (!Array.isArray(eventsQuery.data)) return
+    setHasMoreEvents(eventsQuery.data.length === EVENT_PAGE_SIZE)
+    setEventRows((prev) => {
+      if (eventsOffset === 0) return eventsQuery.data
+      const seen = new Set(prev.map((event) => event.id))
+      const merged = [...prev]
+      eventsQuery.data.forEach((event) => {
+        if (!seen.has(event.id)) {
+          merged.push(event)
+          seen.add(event.id)
+        }
+      })
+      return merged
+    })
+  }, [eventsOffset, eventsQuery.data])
 
   useEffect(() => {
     if (!refreshSignal || refreshSignal === lastRefreshSignalRef.current) return
     lastRefreshSignalRef.current = refreshSignal
     queryClient.invalidateQueries({ queryKey: ['logs', target?.id] })
     queryClient.invalidateQueries({ queryKey: ['insights', target?.id] })
+    setEventsOffset(0)
+    setEventRows([])
     queryClient.invalidateQueries({ queryKey: ['events', target?.id] })
   }, [refreshSignal, queryClient, target?.id])
 
@@ -200,7 +228,7 @@ function TargetDetailsPage({
   }, [logsQuery.data])
 
   const insightsLoading = insightsQuery.isLoading || (insightsQuery.isFetching && !insightsQuery.data)
-  const eventsLoading = eventsQuery.isLoading || (eventsQuery.isFetching && !eventsQuery.data)
+  const eventsLoading = eventsQuery.isLoading && eventsOffset === 0
 
   const lastHop = useMemo(() => {
     const latest = reversedLogs.find((log) => !log.packet_loss && typeof log.hops === 'number')
@@ -338,6 +366,78 @@ function TargetDetailsPage({
       setIsExporting(false)
     }
   }, [t, target, token])
+
+  const handleSelectEventPreset = useCallback(
+    (presetValue) => {
+      setExportEventsError('')
+      setEventsOffset(0)
+      setEventRows([])
+      if (presetValue === 'all') {
+        setEventRangePreset('all')
+        setEventRangeBounds(null)
+        return
+      }
+      const minutes = Number(presetValue)
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        setEventRangePreset('all')
+        setEventRangeBounds(null)
+        return
+      }
+      const endDate = new Date()
+      const startDate = new Date(endDate.getTime() - minutes * 60_000)
+      setEventRangePreset(minutes)
+      setEventRangeBounds({ start: startDate.toISOString(), end: endDate.toISOString() })
+    },
+    [],
+  )
+
+  const handleLoadMoreEvents = useCallback(() => {
+    if (eventsQuery.isFetching || !hasMoreEvents) return
+    setEventsOffset((prev) => prev + EVENT_PAGE_SIZE)
+  }, [eventsQuery.isFetching, hasMoreEvents])
+
+  const handleExportEvents = useCallback(async () => {
+    if (!target || !token) return
+    setIsExportingEvents(true)
+    setExportEventsError('')
+    try {
+      const params = new URLSearchParams()
+      if (eventRangeBounds?.start && eventRangeBounds?.end) {
+        params.set('start', eventRangeBounds.start)
+        params.set('end', eventRangeBounds.end)
+      }
+      const query = params.toString()
+      const response = await fetch(`${API_BASE_URL}/targets/${target.id}/events/export${query ? `?${query}` : ''}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      if (!response.ok) {
+        let detail
+        try {
+          const data = await response.json()
+          detail = data?.detail
+        } catch (err) {
+          // ignore parse errors
+        }
+        throw new Error(detail ?? `HTTP ${response.status}`)
+      }
+      const blob = await response.blob()
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const day = new Date().toISOString().split('T')[0]
+      link.href = downloadUrl
+      link.download = `pingmedaddy-target-${target.id}-events-${day}.csv`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(downloadUrl)
+    } catch (err) {
+      setExportEventsError(err?.message ?? t('history.eventsExportError'))
+    } finally {
+      setIsExportingEvents(false)
+    }
+  }, [eventRangeBounds, t, target, token])
 
   const applyCustomRange = useCallback(async () => {
     if (!rangeStart || !rangeEnd) {
@@ -603,10 +703,19 @@ function TargetDetailsPage({
           </div>
 
           <EventLog
-            events={eventsQuery.data ?? []}
+            events={eventRows}
             isLoading={eventsLoading}
             error={eventsQuery.isError ? t('history.eventsError') : eventsQuery.error?.message ?? ''}
-            rangeLabel={insightsQuery.data ? formatWindowRange(insightsQuery.data) : ''}
+            rangeLabel={eventRangeBounds ? formatWindowRange({ window_start: eventRangeBounds.start, window_end: eventRangeBounds.end }) : t('history.allHistory')}
+            onSelectPreset={handleSelectEventPreset}
+            selectedPreset={eventRangePreset}
+            presets={EVENT_WINDOW_PRESETS}
+            onLoadMore={handleLoadMoreEvents}
+            hasMore={hasMoreEvents}
+            isLoadingMore={eventsQuery.isFetching && eventsOffset > 0}
+            onExport={handleExportEvents}
+            isExporting={isExportingEvents}
+            exportError={exportEventsError}
           />
         </div>
       </div>

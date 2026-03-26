@@ -36,6 +36,7 @@ SELECT create_hypertable('ping_logs', 'time', if_not_exists => TRUE);
 
 -- Index on target_id + time for fast queries
 CREATE INDEX IF NOT EXISTS idx_ping_logs_target_time ON ping_logs (target_id, time DESC);
+CREATE INDEX IF NOT EXISTS idx_event_logs_target_created_at ON event_logs (target_id, created_at ASC, id ASC);
 
 -- Continuous aggregates
 DROP MATERIALIZED VIEW IF EXISTS ping_minute;

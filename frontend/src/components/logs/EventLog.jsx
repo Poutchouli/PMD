@@ -1,7 +1,22 @@
 import { useTranslation } from '../../i18n/LanguageProvider'
 import { formatDateTime } from '../../utils/formatters'
+import { Download } from 'lucide-react'
 
-function EventLog({ events, isLoading, error, rangeLabel }) {
+function EventLog({
+  events,
+  isLoading,
+  error,
+  rangeLabel,
+  onSelectPreset,
+  selectedPreset,
+  presets,
+  onLoadMore,
+  hasMore,
+  isLoadingMore,
+  onExport,
+  isExporting,
+  exportError,
+}) {
   const { t } = useTranslation()
 
   const subtitle = rangeLabel
@@ -39,14 +54,52 @@ function EventLog({ events, isLoading, error, rangeLabel }) {
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 shadow-sm">
-      <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+      <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex flex-col gap-3">
         <div>
           <h3 className="font-semibold text-slate-700 text-sm">{t('history.eventsTitle')}</h3>
           <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
-        <span className="text-xs text-slate-500 bg-white px-2 py-1 rounded-full border border-slate-200">{t('history.eventsTag')}</span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 bg-white rounded-full p-1 border border-slate-200">
+            {presets.map((preset) => (
+              <button
+                key={String(preset.value)}
+                type="button"
+                onClick={() => onSelectPreset?.(preset.value)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-full transition ${selectedPreset === preset.value ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {t(preset.labelKey)}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 bg-white px-2 py-1 rounded-full border border-slate-200">{t('history.eventsTag')}</span>
+            <button
+              type="button"
+              onClick={onExport}
+              disabled={isExporting}
+              className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-full hover:bg-slate-100 transition disabled:opacity-60"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {isExporting ? t('history.eventsExporting') : t('history.eventsExport')}
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="p-5">{content}</div>
+      {exportError && <p className="px-5 pt-2 text-xs text-red-500">{exportError}</p>}
+      <div className="p-5 space-y-3">
+        {content}
+        {!isLoading && !error && events?.length > 0 && hasMore && (
+          <button
+            type="button"
+            onClick={onLoadMore}
+            disabled={isLoadingMore}
+            className="w-full px-3 py-2 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-60"
+          >
+            {isLoadingMore ? t('history.loadingMore') : t('history.loadMore')}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

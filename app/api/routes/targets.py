@@ -29,11 +29,13 @@ from app.schemas import (
 from app.services.scheduler import scheduler
 from app.services.stats import MAX_SAMPLES, compute_target_insights
 from app.services import traceroute as traceroute_service
-from app.hub_auth import get_current_user, require_role
+from app.hub_auth import get_current_user
 
 router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(get_current_user)])
 
 TARGET_CSV_FIELDS = ["ip", "frequency", "url", "notes", "is_active"]
+EVENT_PAGE_SIZE_DEFAULT = 500
+EVENT_PAGE_SIZE_MAX = 5_000
 
 
 def _to_target_out(target: MonitorTarget) -> TargetOut:
@@ -330,9 +332,48 @@ async def get_events(
     target_id: int,
     start: datetime | None = Query(None, description="Start of the range (inclusive)"),
     end: datetime | None = Query(None, description="End of the range (inclusive)"),
-    limit: int = Query(500, ge=1, le=5_000, description="Maximum number of events to return"),
+    limit: int = Query(
+        EVENT_PAGE_SIZE_DEFAULT,
+        ge=1,
+        le=EVENT_PAGE_SIZE_MAX,
+        description="Maximum number of events to return",
+    ),
+    offset: int = Query(0, ge=0, description="Offset used for pagination from oldest to newest"),
     db: AsyncSession = Depends(get_db),
 ):
+    if start and start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end and end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if start and end and start >= end:
+        raise HTTPException(status_code=400, detail="start must be before end")
+
+    target = await db.get(MonitorTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    stmt = select(EventLog).where(EventLog.target_id == target_id)
+    if start:
+        stmt = stmt.where(EventLog.created_at >= start)
+    if end:
+        stmt = stmt.where(EventLog.created_at <= end)
+    stmt = stmt.order_by(EventLog.created_at.asc(), EventLog.id.asc()).offset(offset).limit(limit)
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.get("/{target_id}/events/export")
+async def export_events(
+    target_id: int,
+    start: datetime | None = Query(None, description="Start of the range (inclusive)"),
+    end: datetime | None = Query(None, description="End of the range (inclusive)"),
+    db: AsyncSession = Depends(get_db),
+):
+    target = await db.get(MonitorTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
     if start and start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     if end and end.tzinfo is None:
@@ -345,11 +386,56 @@ async def get_events(
         stmt = stmt.where(EventLog.created_at >= start)
     if end:
         stmt = stmt.where(EventLog.created_at <= end)
-    stmt = stmt.order_by(EventLog.created_at.desc()).limit(limit)
+    stmt = stmt.order_by(EventLog.created_at.asc(), EventLog.id.asc())
 
-    result = await db.execute(stmt)
-    events = list(result.scalars().all())
-    return list(reversed(events))
+    result = await db.stream(stmt)
+    exported_at = datetime.now(timezone.utc).isoformat()
+
+    async def csv_rows():
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+
+        writer.writerow(
+            [
+                "timestamp_utc",
+                "target_id",
+                "target_ip",
+                "event_type",
+                "message",
+                "source",
+                "export_generated_at",
+                "window_start",
+                "window_end",
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        for_export_start = start.isoformat() if start else ""
+        for_export_end = end.isoformat() if end else ""
+
+        async for event in result.scalars():
+            writer.writerow(
+                [
+                    event.created_at.isoformat(),
+                    event.target_id,
+                    target.ip_address,
+                    event.event_type,
+                    event.message,
+                    "scheduler",
+                    exported_at,
+                    for_export_start,
+                    for_export_end,
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    filename = f"pingmedaddy-target-{target.id}-events.csv"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(csv_rows(), media_type="text/csv", headers=headers)
 
 
 @router.get("/{target_id}/insights", response_model=TargetInsights)

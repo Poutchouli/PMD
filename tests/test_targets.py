@@ -145,6 +145,35 @@ async def test_create_pause_resume_flow(monkeypatch):
         assert any(e["event_type"] == "start" for e in events)
 
         resp = await client.get(
+            f"/targets/{target_id}/events",
+            params={"limit": 1, "offset": 0},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        first_page = resp.json()
+        assert len(first_page) == 1
+
+        resp = await client.get(
+            f"/targets/{target_id}/events",
+            params={"limit": 1, "offset": 1},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        second_page = resp.json()
+        assert len(second_page) == 1
+        assert second_page[0]["id"] != first_page[0]["id"]
+
+        resp = await client.get(
+            f"/targets/{target_id}/events/export",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/csv")
+        events_csv_lines = resp.text.strip().splitlines()
+        assert events_csv_lines[0].startswith("timestamp_utc,target_id,target_ip,event_type,message,source")
+        assert len(events_csv_lines) >= 2
+
+        resp = await client.get(
             f"/targets/{target_id}/insights",
             headers=headers,
         )
