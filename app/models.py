@@ -5,6 +5,17 @@ from sqlalchemy.orm import declarative_base, relationship
 Base = declarative_base()
 
 
+class TargetGroup(Base):
+    __tablename__ = "target_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    color = Column(String(7), nullable=False, default="#6B7280")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    targets = relationship("MonitorTarget", back_populates="group", lazy="selectin")
+
+
 class MonitorTarget(Base):
     __tablename__ = "monitor_targets"
 
@@ -14,8 +25,10 @@ class MonitorTarget(Base):
     is_active = Column(Boolean, default=True)
     display_url = Column(String(512), nullable=True)
     notes = Column(Text, nullable=True)
+    group_id = Column(Integer, ForeignKey("target_groups.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    group = relationship("TargetGroup", back_populates="targets", lazy="selectin")
     logs = relationship(
         "PingLog",
         back_populates="target",

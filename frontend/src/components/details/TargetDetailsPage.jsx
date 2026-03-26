@@ -75,6 +75,7 @@ function TargetDetailsPage({
   target,
   token,
   apiCall,
+  groups = [],
   onBack,
   onTargetUpdate,
   onTargetDelete,
@@ -92,7 +93,7 @@ function TargetDetailsPage({
   const [rangeStart, setRangeStart] = useState('')
   const [rangeEnd, setRangeEnd] = useState('')
   const [rangeError, setRangeError] = useState('')
-  const [metadataDraft, setMetadataDraft] = useState({ url: '', notes: '' })
+  const [metadataDraft, setMetadataDraft] = useState({ url: '', notes: '', group_id: '' })
   const [metadataFeedback, setMetadataFeedback] = useState('')
   const [isSavingMetadata, setIsSavingMetadata] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
@@ -127,7 +128,7 @@ function TargetDetailsPage({
     setShowFilterModal(false)
     setIsSavingFilter(false)
     setMetadataFeedback('')
-    setMetadataDraft({ url: target?.url ?? '', notes: target?.notes ?? '' })
+    setMetadataDraft({ url: target?.url ?? '', notes: target?.notes ?? '', group_id: target?.group_id ?? '' })
     queryClient.removeQueries({ queryKey: ['events', target?.id] })
   }, [queryClient, target?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -135,8 +136,9 @@ function TargetDetailsPage({
     if (!target) return false
     const currentUrl = target.url ?? ''
     const currentNotes = target.notes ?? ''
-    return currentUrl !== metadataDraft.url || currentNotes !== metadataDraft.notes
-  }, [metadataDraft.notes, metadataDraft.url, target])
+    const currentGroupId = target.group_id ?? ''
+    return currentUrl !== metadataDraft.url || currentNotes !== metadataDraft.notes || String(currentGroupId) !== String(metadataDraft.group_id)
+  }, [metadataDraft.notes, metadataDraft.url, metadataDraft.group_id, target])
 
   const insightKey = useMemo(() => {
     if (customRange) {
@@ -328,6 +330,7 @@ function TargetDetailsPage({
       const payload = {
         url: metadataDraft.url.trim(),
         notes: metadataDraft.notes,
+        group_id: metadataDraft.group_id ? Number(metadataDraft.group_id) : null,
       }
       const updated = await apiCall(`/targets/${target.id}`, {
         method: 'PATCH',
@@ -335,14 +338,14 @@ function TargetDetailsPage({
         body: JSON.stringify(payload),
       })
       onTargetUpdate(updated)
-      setMetadataDraft({ url: updated.url ?? '', notes: updated.notes ?? '' })
+      setMetadataDraft({ url: updated.url ?? '', notes: updated.notes ?? '', group_id: updated.group_id ?? '' })
       setMetadataFeedback(t('details.notesSaved'))
     } catch (err) {
       setMetadataFeedback(err?.message ?? t('details.notesError'))
     } finally {
       setIsSavingMetadata(false)
     }
-  }, [apiCall, metadataChanged, metadataDraft.notes, metadataDraft.url, onTargetUpdate, t, target])
+  }, [apiCall, metadataChanged, metadataDraft.notes, metadataDraft.url, metadataDraft.group_id, onTargetUpdate, t, target])
 
   const tracerouteMutation = useMutation({
     mutationFn: async () => apiCall(`/targets/${target.id}/traceroute`, { method: 'POST' }),
@@ -644,6 +647,26 @@ function TargetDetailsPage({
                 setMetadataFeedback('')
               }}
             />
+            {groups.length > 0 && (
+              <>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-2 mt-3">
+                  {t('groups.selectGroup')}
+                </label>
+                <select
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
+                  value={metadataDraft.group_id}
+                  onChange={(event) => {
+                    setMetadataDraft((prev) => ({ ...prev, group_id: event.target.value }))
+                    setMetadataFeedback('')
+                  }}
+                >
+                  <option value="">{t('groups.none')}</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
           </div>
           <div className="lg:col-span-2">
             <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">

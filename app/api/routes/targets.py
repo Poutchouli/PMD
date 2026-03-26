@@ -12,7 +12,7 @@ from sqlalchemy.future import select
 from pydantic import ValidationError
 
 from app.db import get_db
-from app.models import MonitorTarget, PingLog, EventLog
+from app.models import MonitorTarget, PingLog, EventLog, TargetGroup
 from app.utils import resolve_host
 from app.schemas import (
     TargetCreate,
@@ -33,7 +33,7 @@ from app.hub_auth import get_current_user
 
 router = APIRouter(prefix="/targets", tags=["targets"], dependencies=[Depends(get_current_user)])
 
-TARGET_CSV_FIELDS = ["ip", "frequency", "url", "notes", "is_active"]
+TARGET_CSV_FIELDS = ["ip", "frequency", "url", "notes", "is_active", "group"]
 EVENT_PAGE_SIZE_DEFAULT = 500
 EVENT_PAGE_SIZE_MAX = 5_000
 
@@ -47,6 +47,9 @@ def _to_target_out(target: MonitorTarget) -> TargetOut:
         created_at=target.created_at,
         url=target.display_url,
         notes=target.notes,
+        group_id=target.group_id,
+        group_name=target.group.name if target.group else None,
+        group_color=target.group.color if target.group else None,
     )
 
 
@@ -58,8 +61,8 @@ async def download_import_template():
         buffer = StringIO()
         writer = csv.writer(buffer)
         writer.writerow(TARGET_CSV_FIELDS)
-        writer.writerow(["192.0.2.10", 5, "https://router.local", "Edge router", True])
-        writer.writerow(["198.51.100.8", 30, "", "Backup link", False])
+        writer.writerow(["192.0.2.10", 5, "https://router.local", "Edge router", True, "Routers"])
+        writer.writerow(["198.51.100.8", 30, "", "Backup link", False, ""])
         yield buffer.getvalue()
 
     headers = {"Content-Disposition": "attachment; filename=pingmedaddy-targets-template.csv"}
@@ -86,6 +89,7 @@ async def export_targets(db: AsyncSession = Depends(get_db)):
                     target.display_url or "",
                     target.notes or "",
                     target.is_active,
+                    target.group.name if target.group else "",
                 ]
             )
             yield buffer.getvalue()
@@ -109,12 +113,18 @@ async def import_targets(file: UploadFile = File(...), db: AsyncSession = Depend
         raise HTTPException(status_code=400, detail="CSV header is required")
 
     normalized_headers = [h.strip().lower() for h in reader.fieldnames if h]
-    missing = [field for field in TARGET_CSV_FIELDS if field not in normalized_headers]
+    # group column is optional in imports
+    required_fields = [f for f in TARGET_CSV_FIELDS if f != "group"]
+    missing = [field for field in required_fields if field not in normalized_headers]
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing)}")
 
     existing_ips_result = await db.execute(select(MonitorTarget.ip_address))
     existing_ips = {ip for (ip,) in existing_ips_result.all()}
+
+    # Pre-load existing groups for resolving group names
+    groups_result = await db.execute(select(TargetGroup))
+    groups_by_name = {g.name.lower(): g for g in groups_result.scalars().all()}
 
     created_targets: List[MonitorTarget] = []
     skipped_existing = 0
@@ -148,6 +158,7 @@ async def import_targets(file: UploadFile = File(...), db: AsyncSession = Depend
             "url": data.get("url"),
             "notes": data.get("notes"),
             "is_active": parse_bool(data.get("is_active", "true")),
+            "group": data.get("group") or None,
         }
         if not payload["ip"]:
             errors.append(f"Row {idx}: ip is required")
@@ -174,6 +185,16 @@ async def import_targets(file: UploadFile = File(...), db: AsyncSession = Depend
             notes=parsed.notes,
             is_active=parsed.is_active,
         )
+        # Resolve group name to group_id (create if missing)
+        group_name = parsed.group.strip() if parsed.group else None
+        if group_name:
+            group_key = group_name.lower()
+            if group_key not in groups_by_name:
+                new_group = TargetGroup(name=group_name)
+                db.add(new_group)
+                await db.flush()
+                groups_by_name[group_key] = new_group
+            target.group_id = groups_by_name[group_key].id
         db.add(target)
         created_targets.append(target)
 
@@ -202,6 +223,7 @@ async def add_target(payload: TargetCreate, db: AsyncSession = Depends(get_db)):
         frequency=payload.frequency,
         display_url=str(payload.url) if payload.url else None,
         notes=payload.notes,
+        group_id=payload.group_id,
     )
     db.add(target)
     await db.commit()
@@ -212,8 +234,14 @@ async def add_target(payload: TargetCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/", response_model=List[TargetOut])
-async def list_targets(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(MonitorTarget))
+async def list_targets(
+    group_id: int | None = Query(None, description="Filter by group ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(MonitorTarget)
+    if group_id is not None:
+        stmt = stmt.where(MonitorTarget.group_id == group_id)
+    result = await db.execute(stmt)
     return [_to_target_out(t) for t in result.scalars().all()]
 
 
@@ -231,6 +259,9 @@ async def update_target(target_id: int, payload: TargetUpdate, db: AsyncSession 
 
     if "notes" in payload.model_fields_set:
         target.notes = payload.notes
+
+    if "group_id" in payload.model_fields_set:
+        target.group_id = payload.group_id
 
     await db.commit()
     await db.refresh(target)

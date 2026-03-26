@@ -7,6 +7,7 @@ import {
   Download,
   ExternalLink,
   FileSpreadsheet,
+  FolderOpen,
   Globe,
   LogOut,
   Plus,
@@ -28,7 +29,7 @@ const POLL_INTERVAL = 3000
 const DASHBOARD_INSIGHTS_REFRESH_MS = 60_000
 const TARGETS_CACHE_KEY = 'pmd_targets_cache'
 
-const createEmptyTargetForm = () => ({ ip: '', frequency: 5, url: '', notes: '' })
+const createEmptyTargetForm = () => ({ ip: '', frequency: 5, url: '', notes: '', group_id: '' })
 
 function readCachedTargets() {
   try {
@@ -63,6 +64,8 @@ function App() {
   const [importError, setImportError] = useState('')
   const [importFilename, setImportFilename] = useState('')
   const [detailRefreshSignal, setDetailRefreshSignal] = useState(0)
+  const [groups, setGroups] = useState([])
+  const [selectedGroupId, setSelectedGroupId] = useState(null)
 
   const insightsMapRef = useRef({})
   const insightFreshnessRef = useRef({})
@@ -186,6 +189,14 @@ function App() {
     [updateInsights],
   )
 
+  const loadGroups = useCallback(async () => {
+    if (!token) return
+    try {
+      const result = await apiCall('/groups/')
+      setGroups(result)
+    } catch { /* handled in apiCall */ }
+  }, [apiCall, token])
+
   const loadTargets = useCallback(async () => {
     if (!token) return
     try {
@@ -216,7 +227,8 @@ function App() {
   useEffect(() => {
     if (!token) return
     loadTargets()
-  }, [loadTargets, token])
+    loadGroups()
+  }, [loadTargets, loadGroups, token])
 
   useEffect(() => {
     if (!token) return undefined
@@ -244,6 +256,9 @@ function App() {
       if (notesValue) {
         payload.notes = notesValue
       }
+      if (form.group_id) {
+        payload.group_id = Number(form.group_id)
+      }
       await apiCall('/targets/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -251,6 +266,7 @@ function App() {
       })
       setForm(createEmptyTargetForm())
       await loadTargets()
+      await loadGroups()
       setView('dashboard')
     } catch (err) {
       // already surfaced
@@ -519,6 +535,53 @@ function App() {
               </button>
             </div>
 
+            {groups.length > 0 && (
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <FolderOpen className="w-4 h-4 text-slate-400" />
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(null)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedGroupId === null
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {t('groups.all')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(0)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedGroupId === 0
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {t('groups.noGroup')}
+                </button>
+                {groups.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => setSelectedGroupId(g.id)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      selectedGroupId === g.id
+                        ? 'text-white'
+                        : 'text-slate-600 hover:opacity-80'
+                    }`}
+                    style={{
+                      backgroundColor: selectedGroupId === g.id ? (g.color || '#1e293b') : `${g.color || '#e2e8f0'}30`,
+                      borderWidth: '1px',
+                      borderColor: g.color || '#e2e8f0',
+                    }}
+                  >
+                    {g.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {targets.length === 0 && !targetsLoaded && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Array.from({ length: 3 }).map((_, i) => <TargetCardSkeleton key={i} />)}
@@ -534,7 +597,13 @@ function App() {
             )}
             {targets.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {targets.map((target) => (
+                {targets
+                  .filter((target) => {
+                    if (selectedGroupId === null) return true
+                    if (selectedGroupId === 0) return !target.group_id
+                    return target.group_id === selectedGroupId
+                  })
+                  .map((target) => (
                   <TargetCard
                     key={target.id}
                     target={target}
@@ -609,6 +678,21 @@ function App() {
                     />
                   </div>
                 </div>
+                {groups.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">{t('groups.selectGroup')}</label>
+                    <select
+                      className="w-full border border-slate-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-200 focus:border-slate-400 outline-none transition-all"
+                      value={form.group_id}
+                      onChange={(event) => setForm((prev) => ({ ...prev, group_id: event.target.value }))}
+                    >
+                      <option value="">{t('groups.none')}</option>
+                      {groups.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">{t('create.notesLabel')}</label>
                   <textarea
@@ -717,6 +801,7 @@ function App() {
             target={currentTarget}
             token={token}
             apiCall={apiCall}
+            groups={groups}
             onBack={() => {
               setView('dashboard')
               setSelectedId(null)

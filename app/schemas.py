@@ -5,12 +5,37 @@ from pydantic import AnyHttpUrl, BaseModel, Field, ConfigDict, field_validator
 from app.utils import resolve_host
 
 
+# ============ Groups ============
+
+class GroupCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+    color: str = Field("#6B7280", pattern=r"^#[0-9A-Fa-f]{6}$")
+
+
+class GroupOut(BaseModel):
+    id: int
+    name: str
+    color: str
+    target_count: int = 0
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GroupUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=50)
+    color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    model_config = ConfigDict(extra="forbid")
+
+
+# ============ Targets ============
+
 class TargetImportRow(BaseModel):
     ip: str = Field(..., description="IP or hostname to monitor")
     frequency: int = Field(1, ge=1, le=3600, description="Seconds between pings")
     url: Optional[AnyHttpUrl] = Field(None, description="Optional interface URL")
     notes: Optional[str] = Field(None, max_length=2000, description="Free-form notes")
     is_active: bool = Field(True, description="Whether monitoring starts immediately")
+    group: Optional[str] = Field(None, max_length=50, description="Group name (created if missing)")
 
     model_config = ConfigDict(extra="ignore")
 
@@ -44,6 +69,7 @@ class TargetCreate(BaseModel):
     frequency: int = Field(1, ge=1, le=3600, description="Seconds between pings")
     url: Optional[AnyHttpUrl] = Field(None, description="Optional interface URL")
     notes: Optional[str] = Field(None, max_length=2000, description="Free-form notes")
+    group_id: Optional[int] = Field(None, description="Optional group ID")
 
     @field_validator("ip", mode="before")
     @classmethod
@@ -78,6 +104,9 @@ class TargetOut(BaseModel):
     created_at: datetime
     url: Optional[str]
     notes: Optional[str]
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+    group_color: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -85,6 +114,7 @@ class TargetUpdate(BaseModel):
     frequency: Optional[int] = Field(None, ge=1, le=3600)
     url: Optional[AnyHttpUrl] = Field(None, description="Optional interface URL")
     notes: Optional[str] = Field(None, max_length=2000)
+    group_id: Optional[int] = Field(None, description="Group ID (null to remove)")
 
     model_config = ConfigDict(extra="forbid")
 

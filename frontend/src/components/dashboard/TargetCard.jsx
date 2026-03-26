@@ -51,6 +51,15 @@ function TargetCard({ target, insights, onSelect, onPrefetch, t }) {
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${colors.dot}`} />
           <span className="font-bold text-slate-800 text-base truncate">{target.ip}</span>
+          {target.group_name && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold text-white truncate max-w-[6rem]"
+              style={{ backgroundColor: target.group_color || '#64748b' }}
+              title={target.group_name}
+            >
+              {target.group_name}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {target.url && (

@@ -3,8 +3,9 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import get_settings, APP_VERSION
@@ -20,6 +21,7 @@ from app.hub_auth import (
 # Routeurs
 from app.api.routes.auth import router as auth_router
 from app.api.routes.targets import router as targets_router
+from app.api.routes.groups import router as groups_router
 from app.api.routes.preferences import router as preferences_router
 from app.api.routes.m2m import router as m2m_router
 from app.api.routes.backup import router as backup_router
@@ -156,6 +158,7 @@ def create_app() -> FastAPI:
     # Routeurs métier
     app.include_router(auth_router)
     app.include_router(targets_router)
+    app.include_router(groups_router)
 
     # Routeurs Hub
     app.include_router(preferences_router)
@@ -163,6 +166,15 @@ def create_app() -> FastAPI:
     app.include_router(backup_router)
     app.include_router(tests_router)
     app.include_router(docs_router)
+
+    # Global exception handler for unhandled errors
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+        )
 
     # ============================================================
     # ENDPOINTS PUBLICS (health, config, version, jwks)

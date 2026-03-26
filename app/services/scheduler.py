@@ -28,43 +28,54 @@ class MonitorScheduler:
 
     async def monitor_loop(self, target_id: int, ip: str, frequency: int):
         while True:
-            timestamp = datetime.now(timezone.utc)
-            latency, hops, loss = await ping_target(ip)
-            async with AsyncSessionLocal() as session:
-                session.add(
-                    PingLog(
-                        time=timestamp,
-                        target_id=target_id,
-                        latency_ms=latency,
-                        hops=hops,
-                        packet_loss=loss,
+            try:
+                timestamp = datetime.now(timezone.utc)
+                try:
+                    latency, hops, loss = await asyncio.wait_for(
+                        ping_target(ip), timeout=frequency + 5
                     )
-                )
-                await session.commit()
+                except asyncio.TimeoutError:
+                    latency, hops, loss = None, None, True
+                async with AsyncSessionLocal() as session:
+                    session.add(
+                        PingLog(
+                            time=timestamp,
+                            target_id=target_id,
+                            latency_ms=latency,
+                            hops=hops,
+                            packet_loss=loss,
+                        )
+                    )
+                    await session.commit()
 
-            # Track consecutive failures and create events
-            if loss:
-                self._failure_counts[target_id] = self._failure_counts.get(target_id, 0) + 1
-                # Create event when threshold is reached and we haven't already reported
-                if (self._failure_counts[target_id] >= CONSECUTIVE_FAILURES_THRESHOLD
-                        and not self._in_failure_state.get(target_id, False)):
-                    self._in_failure_state[target_id] = True
-                    await self._record_event(
-                        target_id,
-                        "failure",
-                        f"Target {ip} unreachable - {self._failure_counts[target_id]} consecutive failed pings"
-                    )
-            else:
-                # If we were in failure state and now recovered, create recovery event
-                if self._in_failure_state.get(target_id, False):
-                    await self._record_event(
-                        target_id,
-                        "recovery",
-                        f"Target {ip} recovered after {self._failure_counts[target_id]} failed pings"
-                    )
-                # Reset failure tracking
-                self._failure_counts[target_id] = 0
-                self._in_failure_state[target_id] = False
+                # Track consecutive failures and create events
+                if loss:
+                    self._failure_counts[target_id] = self._failure_counts.get(target_id, 0) + 1
+                    # Create event when threshold is reached and we haven't already reported
+                    if (self._failure_counts[target_id] >= CONSECUTIVE_FAILURES_THRESHOLD
+                            and not self._in_failure_state.get(target_id, False)):
+                        self._in_failure_state[target_id] = True
+                        await self._record_event(
+                            target_id,
+                            "failure",
+                            f"Target {ip} unreachable - {self._failure_counts[target_id]} consecutive failed pings"
+                        )
+                else:
+                    # If we were in failure state and now recovered, create recovery event
+                    if self._in_failure_state.get(target_id, False):
+                        await self._record_event(
+                            target_id,
+                            "recovery",
+                            f"Target {ip} recovered after {self._failure_counts[target_id]} failed pings"
+                        )
+                    # Reset failure tracking
+                    self._failure_counts[target_id] = 0
+                    self._in_failure_state[target_id] = False
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("Unexpected error in monitor_loop for target %s: %s", target_id, exc)
 
             await asyncio.sleep(frequency)
 
