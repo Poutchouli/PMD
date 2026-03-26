@@ -91,6 +91,10 @@ function App() {
           try {
             const data = await response.json()
             detail = data?.detail
+            // Pydantic 422 returns detail as an array of error objects
+            if (Array.isArray(detail)) {
+              detail = detail.map((e) => e.msg || JSON.stringify(e)).join('; ')
+            }
           } catch (err) {
             // ignore JSON errors
           }
@@ -102,7 +106,9 @@ function App() {
       } catch (err) {
         console.error('API Error:', err)
         if (!String(err.message).includes(t('alerts.sessionExpired'))) {
-          setError(t('alerts.apiUnavailable'))
+          // Show the actual backend error for HTTP failures, generic message for network errors
+          const isNetworkError = err instanceof TypeError || err.message === 'Failed to fetch'
+          setError(isNetworkError ? t('alerts.apiUnavailable') : err.message)
         }
         throw err
       }

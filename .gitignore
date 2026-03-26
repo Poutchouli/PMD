@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .env.local
 pingmedaddy.db
+.venv/
+test_*.db

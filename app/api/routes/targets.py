@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import ipaddress
 from datetime import datetime, timezone
 from io import StringIO
 from typing import List
@@ -14,6 +13,7 @@ from pydantic import ValidationError
 
 from app.db import get_db
 from app.models import MonitorTarget, PingLog, EventLog
+from app.utils import resolve_host
 from app.schemas import (
     TargetCreate,
     TargetOut,
@@ -151,9 +151,9 @@ async def import_targets(file: UploadFile = File(...), db: AsyncSession = Depend
             errors.append(f"Row {idx}: ip is required")
             continue
         try:
-            payload["ip"] = str(ipaddress.ip_address(payload["ip"]))
+            payload["ip"] = resolve_host(payload["ip"])
         except ValueError:
-            errors.append(f"Row {idx}: invalid IP {payload['ip']}")
+            errors.append(f"Row {idx}: invalid host {payload['ip']}")
             continue
         if payload["ip"] in existing_ips or any(t.ip_address == payload["ip"] for t in created_targets):
             skipped_existing += 1

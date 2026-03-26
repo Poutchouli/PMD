@@ -1,16 +1,23 @@
 from datetime import datetime
 from typing import List, Optional
-from pydantic import AnyHttpUrl, BaseModel, Field, IPvAnyAddress, ConfigDict, field_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, ConfigDict, field_validator
+
+from app.utils import resolve_host
 
 
 class TargetImportRow(BaseModel):
-    ip: IPvAnyAddress = Field(..., description="IP to monitor")
+    ip: str = Field(..., description="IP or hostname to monitor")
     frequency: int = Field(1, ge=1, le=3600, description="Seconds between pings")
     url: Optional[AnyHttpUrl] = Field(None, description="Optional interface URL")
     notes: Optional[str] = Field(None, max_length=2000, description="Free-form notes")
     is_active: bool = Field(True, description="Whether monitoring starts immediately")
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_validator("ip", mode="before")
+    @classmethod
+    def _resolve_ip(cls, value: str) -> str:
+        return resolve_host(value)
 
     @field_validator("url", mode="before")
     @classmethod
@@ -33,10 +40,15 @@ class TargetImportRow(BaseModel):
 
 
 class TargetCreate(BaseModel):
-    ip: IPvAnyAddress = Field(..., description="IP to monitor")
+    ip: str = Field(..., description="IP or hostname to monitor")
     frequency: int = Field(1, ge=1, le=3600, description="Seconds between pings")
     url: Optional[AnyHttpUrl] = Field(None, description="Optional interface URL")
     notes: Optional[str] = Field(None, max_length=2000, description="Free-form notes")
+
+    @field_validator("ip", mode="before")
+    @classmethod
+    def _resolve_ip(cls, value: str) -> str:
+        return resolve_host(value)
 
     @field_validator("url", mode="before")
     @classmethod
