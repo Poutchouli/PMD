@@ -44,6 +44,15 @@ const EVENT_WINDOW_PRESETS = [
 
 const API_BASE_URL = config.apiUrl
 
+const ZOOM_STEPS = [43200, 10080, 1440, 240, 60, 15]
+
+function getZoomWindow(currentMinutes) {
+  for (const step of ZOOM_STEPS) {
+    if (step < currentMinutes) return step
+  }
+  return currentMinutes
+}
+
 function usePageVisibility() {
   const [isVisible, setIsVisible] = useState(() => {
     if (typeof document === 'undefined') return true
@@ -75,6 +84,7 @@ function TargetDetailsPage({
   const queryClient = useQueryClient()
   const isVisible = usePageVisibility()
   const lastRefreshSignalRef = useRef(0)
+  const latencyChartRef = useRef(null)
   const [insightWindow, setInsightWindow] = useState(60)
   const [customRange, setCustomRange] = useState(null)
   const [rangeStart, setRangeStart] = useState('')
@@ -472,6 +482,31 @@ function TargetDetailsPage({
     await insightsQuery.refetch()
   }, [insightsQuery])
 
+  const handleLossBarClick = useCallback(
+    (barData) => {
+      const bucket = barData?.bucket
+      if (!bucket) return
+      const zoomMinutes = getZoomWindow(insightWindow)
+      if (zoomMinutes === insightWindow) return
+      const bucketTime = new Date(bucket).getTime()
+      const halfMs = (zoomMinutes * 60_000) / 2
+      const startDate = new Date(bucketTime - halfMs)
+      const endDate = new Date(bucketTime + halfMs)
+      const toLocalInput = (d) => {
+        const pad = (n) => String(n).padStart(2, '0')
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+      }
+      setRangeStart(toLocalInput(startDate))
+      setRangeEnd(toLocalInput(endDate))
+      setRangeError('')
+      setCustomRange({ start: startDate.toISOString(), end: endDate.toISOString() })
+      setInsightWindow(zoomMinutes)
+      insightsQuery.refetch()
+      latencyChartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    },
+    [insightWindow, insightsQuery],
+  )
+
   const isLoadingAnything = isBusy || insightsQuery.isLoading || logsQuery.isLoading
 
   return (
@@ -595,7 +630,7 @@ function TargetDetailsPage({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
+        <div ref={latencyChartRef} className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <div>
               <h3 className="font-semibold text-slate-700 flex items-center gap-2">
@@ -724,10 +759,15 @@ function TargetDetailsPage({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-slate-700 text-sm">{t('details.lossTitle')}</h3>
+            <div>
+              <h3 className="font-semibold text-slate-700 text-sm">{t('details.lossTitle')}</h3>
+              {insightWindow > 15 && (
+                <p className="text-xs text-slate-400 mt-0.5">{t('details.lossClickToZoom')}</p>
+              )}
+            </div>
             <span className="text-xs text-slate-400">{t('details.lossSubtitle')}</span>
           </div>
-          <LossTimelineChart data={timelineData} isLoading={insightsLoading} />
+          <LossTimelineChart data={timelineData} isLoading={insightsLoading} onBarClick={insightWindow > 15 ? handleLossBarClick : undefined} />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 text-sm">
             <div>
               <p className="text-xs uppercase text-slate-400">{t('details.windowAnalyzed')}</p>

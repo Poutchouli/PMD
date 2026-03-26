@@ -12,6 +12,7 @@ export function buildTimelineData(insights) {
       : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const lossRatePct = Number(((point.loss_rate ?? 0) * 100).toFixed(2))
     return {
+      bucket: point.bucket,
       label,
       fullLabel: date.toLocaleString(),
       avg: point.avg_latency_ms ?? null,
