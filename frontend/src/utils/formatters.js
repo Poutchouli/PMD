@@ -25,3 +25,9 @@ export function formatDateTime(value) {
   if (!value) return '--'
   return new Date(value).toLocaleString()
 }
+
+export function formatLossRate(lossCount, sampleCount) {
+  if (typeof sampleCount !== 'number' || sampleCount === 0) return '--'
+  const rate = ((lossCount ?? 0) / sampleCount) * 100
+  return `${rate.toFixed(1)} %`
+}

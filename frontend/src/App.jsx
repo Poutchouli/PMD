@@ -4,7 +4,6 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
-  ChevronRight,
   Download,
   ExternalLink,
   FileSpreadsheet,
@@ -18,13 +17,13 @@ import {
 } from 'lucide-react'
 import LoginScreen from './components/auth/LoginScreen'
 import LanguageSelector from './components/common/LanguageSelector'
+import TargetCard from './components/dashboard/TargetCard'
+import TargetCardSkeleton from './components/dashboard/TargetCardSkeleton'
 import TargetDetailsPage from './components/details/TargetDetailsPage'
 import { useTranslation } from './i18n/LanguageProvider'
 import { useAuth } from './context/AuthContext'
 import { useConfig } from './context/ConfigContext'
-import { formatLatency, formatPercent } from './utils/formatters'
 import { bucketSecondsForWindow } from './utils/insights'
-import { SkeletonTargetRow } from './components/common/Skeleton'
 const POLL_INTERVAL = 3000
 const DASHBOARD_INSIGHTS_REFRESH_MS = 60_000
 const TARGETS_CACHE_KEY = 'pmd_targets_cache'
@@ -520,92 +519,33 @@ function App() {
               </button>
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="px-6 py-4 w-24">{t('dashboard.table.state')}</th>
-                      <th className="px-6 py-4">{t('dashboard.table.address')}</th>
-                      <th className="px-6 py-4">{t('dashboard.table.frequency')}</th>
-                      <th className="px-6 py-4">{t('dashboard.table.lastActivity')}</th>
-                      <th className="px-6 py-4 text-right">{t('dashboard.table.action')}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {targets.length === 0 && !targetsLoaded && (
-                      <>
-                        {Array.from({ length: 3 }).map((_, i) => <SkeletonTargetRow key={i} />)}
-                      </>
-                    )}
-                    {targets.length === 0 && targetsLoaded && (
-                      <tr>
-                        <td colSpan={5} className="p-12 text-center">
-                          <div className="flex flex-col items-center text-slate-500 gap-3">
-                            <Server className="w-10 h-10 text-slate-300" />
-                            <p>{t('dashboard.emptyState')}</p>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    {targets.map((target) => {
-                      const rowInsights = insightsMap[target.id]
-                      return (
-                        <tr
-                          key={target.id}
-                          className={`hover:bg-slate-50 cursor-pointer border-l-4 transition-colors ${target.is_active ? 'border-l-emerald-500' : 'border-l-transparent'}`}
-                          onClick={() => handleSelectTarget(target.id)}
-                          onMouseEnter={() => prefetchTarget(target.id)}
-                        >
-                          <td className="px-6 py-4">
-                            {target.is_active ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 uppercase tracking-wide">
-                                {t('dashboard.statusActive')}
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase tracking-wide">
-                                {t('dashboard.statusPaused')}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="font-bold text-slate-700 text-base flex items-center gap-2">
-                              <span>{target.ip}</span>
-                              {target.url && (
-                                <a
-                                  href={target.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-emerald-600 hover:text-emerald-700 text-xs font-semibold inline-flex items-center gap-1"
-                                  onClick={(event) => event.stopPropagation()}
-                                  title={t('dashboard.openInterface')}
-                                  aria-label={t('dashboard.openInterface')}
-                                >
-                                  {t('dashboard.openInterface')}
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-500 mt-1">
-                              {rowInsights
-                                ? `${formatLatency(rowInsights.latency_avg_ms)} • ${t('insights.cards.uptime')} ${formatPercent(rowInsights.uptime_percent)}`
-                                : t('dashboard.metricsLoading')}
-                            </p>
-                          </td>
-                          <td className="px-6 py-4 text-slate-500 font-mono text-xs">{target.frequency}s</td>
-                          <td className="px-6 py-4 text-slate-400 text-xs">
-                            {new Date(target.created_at).toLocaleDateString()}
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <ChevronRight className="w-5 h-5 text-slate-300 inline-block" />
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+            {targets.length === 0 && !targetsLoaded && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => <TargetCardSkeleton key={i} />)}
               </div>
-            </div>
+            )}
+            {targets.length === 0 && targetsLoaded && (
+              <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-12 text-center">
+                <div className="flex flex-col items-center text-slate-500 gap-3">
+                  <Server className="w-10 h-10 text-slate-300" />
+                  <p>{t('dashboard.emptyState')}</p>
+                </div>
+              </div>
+            )}
+            {targets.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {targets.map((target) => (
+                  <TargetCard
+                    key={target.id}
+                    target={target}
+                    insights={insightsMap[target.id] ?? null}
+                    onSelect={handleSelectTarget}
+                    onPrefetch={prefetchTarget}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
           </section>
         )}
 

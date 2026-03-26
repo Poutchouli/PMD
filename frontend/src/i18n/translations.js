@@ -48,6 +48,24 @@ export const messages = {
       statusPaused: 'Paused',
       metricsLoading: 'Computing stats…',
       openInterface: 'Open interface',
+      metrics: {
+        latencyAvg: 'Avg',
+        latencyP95: 'P95',
+        uptime: 'Uptime',
+        loss: 'Loss',
+        jitter: 'Jitter',
+        samples: 'Samples',
+        losses: 'Losses',
+      },
+      tooltip: {
+        frequency: 'Frequency',
+        createdAt: 'Created',
+      },
+      health: {
+        healthy: 'Healthy',
+        warning: 'Warning',
+        critical: 'Critical',
+      },
     },
     create: {
       back: 'Back to list',
@@ -248,6 +266,24 @@ export const messages = {
       statusPaused: 'Pause',
       metricsLoading: 'Calcul des stats…',
       openInterface: "Ouvrir l'interface",
+      metrics: {
+        latencyAvg: 'Moy.',
+        latencyP95: 'P95',
+        uptime: 'Uptime',
+        loss: 'Perte',
+        jitter: 'Jitter',
+        samples: 'Échant.',
+        losses: 'Pertes',
+      },
+      tooltip: {
+        frequency: 'Fréquence',
+        createdAt: 'Créé le',
+      },
+      health: {
+        healthy: 'OK',
+        warning: 'Attention',
+        critical: 'Critique',
+      },
     },
     create: {
       back: 'Retour à la liste',
@@ -448,6 +484,24 @@ export const messages = {
       statusPaused: '暫停',
       metricsLoading: '計算統計中…',
       openInterface: '開啟介面',
+      metrics: {
+        latencyAvg: '平均',
+        latencyP95: 'P95',
+        uptime: '可用率',
+        loss: '遺失',
+        jitter: '抖動',
+        samples: '樣本',
+        losses: '遺失數',
+      },
+      tooltip: {
+        frequency: '頻率',
+        createdAt: '建立於',
+      },
+      health: {
+        healthy: '正常',
+        warning: '警告',
+        critical: '嚴重',
+      },
     },
     create: {
       back: '返回列表',

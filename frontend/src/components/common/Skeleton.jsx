@@ -37,19 +37,4 @@ function SkeletonTableRow({ cols }) {
   )
 }
 
-function SkeletonTargetRow() {
-  return (
-    <tr className="border-l-4 border-l-transparent">
-      <td className="px-6 py-4"><SkeletonBlock className="h-6 w-16 rounded" /></td>
-      <td className="px-6 py-4 space-y-2">
-        <SkeletonBlock className="h-4 w-36" />
-        <SkeletonBlock className="h-3 w-48" />
-      </td>
-      <td className="px-6 py-4"><SkeletonBlock className="h-3 w-8" /></td>
-      <td className="px-6 py-4"><SkeletonBlock className="h-3 w-20" /></td>
-      <td className="px-6 py-4 text-right"><SkeletonBlock className="h-5 w-5 ml-auto" /></td>
-    </tr>
-  )
-}
-
-export { SkeletonBlock, SkeletonCard, SkeletonChart, SkeletonTableRow, SkeletonTargetRow }
+export { SkeletonBlock, SkeletonCard, SkeletonChart, SkeletonTableRow }
