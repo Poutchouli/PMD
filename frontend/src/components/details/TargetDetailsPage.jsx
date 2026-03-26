@@ -676,8 +676,8 @@ function TargetDetailsPage({
           </div>
           <LatencyTimelineChart data={timelineData} isLoading={insightsLoading} />
         </div>
-        <div className="flex flex-col gap-4">
-          <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col h-[350px] lg:h-auto">
+        <div className="flex flex-col gap-4 lg:h-[720px] lg:min-h-0">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col h-[350px] lg:h-[300px] lg:flex-none">
             <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="font-semibold text-slate-700 text-sm">{t('details.logsTitle')}</h3>
@@ -703,6 +703,7 @@ function TargetDetailsPage({
           </div>
 
           <EventLog
+            className="max-h-[420px] lg:max-h-none lg:flex-1 lg:min-h-0"
             events={eventRows}
             isLoading={eventsLoading}
             error={eventsQuery.isError ? t('history.eventsError') : eventsQuery.error?.message ?? ''}

@@ -3,6 +3,7 @@ import { formatDateTime } from '../../utils/formatters'
 import { Download } from 'lucide-react'
 
 function EventLog({
+  className = '',
   events,
   isLoading,
   error,
@@ -53,7 +54,7 @@ function EventLog({
   }
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 shadow-sm">
+    <div className={`bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col min-h-0 ${className}`}>
       <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex flex-col gap-3">
         <div>
           <h3 className="font-semibold text-slate-700 text-sm">{t('history.eventsTitle')}</h3>
@@ -87,7 +88,7 @@ function EventLog({
         </div>
       </div>
       {exportError && <p className="px-5 pt-2 text-xs text-red-500">{exportError}</p>}
-      <div className="p-5 space-y-3">
+      <div className="p-5 space-y-3 overflow-y-auto min-h-0">
         {content}
         {!isLoading && !error && events?.length > 0 && hasMore && (
           <button
