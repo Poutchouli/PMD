@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   ArrowLeft,
@@ -16,6 +16,7 @@ import LossTimelineChart from '../analytics/LossTimelineChart'
 import LogsTable from '../logs/LogsTable'
 import EventLog from '../logs/EventLog'
 import TraceroutePanel from '../network/TraceroutePanel'
+import { SkeletonCard, SkeletonTableRow } from '../common/Skeleton'
 import { useTranslation } from '../../i18n/LanguageProvider'
 import { formatLatency, formatPercent, formatWindowLabel, formatWindowRange } from '../../utils/formatters'
 import { buildTimelineData, bucketSecondsForWindow } from '../../utils/insights'
@@ -122,8 +123,6 @@ function TargetDetailsPage({
     setExportEventsError('')
     setMetadataFeedback('')
     setMetadataDraft({ url: target?.url ?? '', notes: target?.notes ?? '' })
-    queryClient.removeQueries({ queryKey: ['logs', target?.id] })
-    queryClient.removeQueries({ queryKey: ['insights', target?.id] })
     queryClient.removeQueries({ queryKey: ['events', target?.id] })
   }, [queryClient, target?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -150,6 +149,8 @@ function TargetDetailsPage({
     queryKey: ['logs', target?.id],
     queryFn: async () => apiCall(`/targets/${target.id}/logs?limit=${LOG_LIMIT}`),
     enabled: Boolean(target?.id),
+    staleTime: 2_000,
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     refetchInterval: () => {
@@ -176,6 +177,7 @@ function TargetDetailsPage({
     },
     enabled: Boolean(target?.id),
     staleTime: 10_000,
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
     refetchInterval: () => {
       if (!target?.is_active) return false
@@ -200,6 +202,7 @@ function TargetDetailsPage({
     },
     enabled: Boolean(target?.id),
     staleTime: 60_000, // Events don't change often, cache for 1 minute
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false, // Don't refetch on every focus
     refetchInterval: false,
     refetchIntervalInBackground: false,
@@ -624,9 +627,11 @@ function TargetDetailsPage({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {insightCards.map((card) => (
-          <StatsCard key={card.label} label={card.label} value={card.value} helper={card.helper} accent={card.accent} />
-        ))}
+        {insightsLoading
+          ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+          : insightCards.map((card) => (
+              <StatsCard key={card.label} label={card.label} value={card.value} helper={card.helper} accent={card.accent} />
+            ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -734,7 +739,24 @@ function TargetDetailsPage({
               </div>
             </div>
             {exportError && <p className="px-5 pt-2 text-xs text-red-500">{exportError}</p>}
-            <LogsTable logs={reversedLogs} />
+            {logsQuery.isLoading ? (
+              <div className="overflow-y-auto" style={{ maxHeight: 378 }}>
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500 sticky top-0 z-10">
+                    <tr>
+                      <th className="text-left px-4 py-2 font-semibold uppercase tracking-wide text-[11px]">{t('logs.headers.time')}</th>
+                      <th className="text-left px-4 py-2 font-semibold uppercase tracking-wide text-[11px]">{t('logs.headers.latency')}</th>
+                      <th className="text-left px-4 py-2 font-semibold uppercase tracking-wide text-[11px]">{t('logs.headers.status')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {Array.from({ length: 6 }).map((_, i) => <SkeletonTableRow key={i} cols={3} />)}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <LogsTable logs={reversedLogs} />
+            )}
           </div>
 
           <EventLog

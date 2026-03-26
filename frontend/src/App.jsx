@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
@@ -23,17 +24,32 @@ import { useAuth } from './context/AuthContext'
 import { useConfig } from './context/ConfigContext'
 import { formatLatency, formatPercent } from './utils/formatters'
 import { bucketSecondsForWindow } from './utils/insights'
+import { SkeletonTargetRow } from './components/common/Skeleton'
 const POLL_INTERVAL = 3000
 const DASHBOARD_INSIGHTS_REFRESH_MS = 60_000
+const TARGETS_CACHE_KEY = 'pmd_targets_cache'
 
 const createEmptyTargetForm = () => ({ ip: '', frequency: 5, url: '', notes: '' })
+
+function readCachedTargets() {
+  try {
+    const raw = localStorage.getItem(TARGETS_CACHE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return parsed
+    }
+  } catch { /* ignore corrupt cache */ }
+  return []
+}
 
 function App() {
   const { t } = useTranslation()
   const { token, isAuthenticated, logout: hubLogout, authFetch } = useAuth()
   const { apiUrl } = useConfig()
+  const queryClient = useQueryClient()
   const [view, setView] = useState('dashboard')
-  const [targets, setTargets] = useState([])
+  const [targets, setTargets] = useState(() => readCachedTargets())
+  const [targetsLoaded, setTargetsLoaded] = useState(false)
   const [selectedId, setSelectedId] = useState(null)
   const [form, setForm] = useState(() => createEmptyTargetForm())
   const [error, setError] = useState('')
@@ -64,9 +80,11 @@ function App() {
       setView('dashboard')
       setSelectedId(null)
       setTargets([])
+      setTargetsLoaded(false)
       setInsightsMap({})
       insightsMapRef.current = {}
       insightFreshnessRef.current = {}
+      try { localStorage.removeItem(TARGETS_CACHE_KEY) } catch { /* ignore */ }
       if (message) {
         setError(message)
       }
@@ -175,6 +193,8 @@ function App() {
       const result = await apiCall('/targets/')
       result.sort((a, b) => a.id - b.id)
       setTargets(result)
+      setTargetsLoaded(true)
+      try { localStorage.setItem(TARGETS_CACHE_KEY, JSON.stringify(result)) } catch { /* quota */ }
       await refreshDashboardInsights(result)
       if (selectedId && !result.some((target) => target.id === selectedId)) {
         setSelectedId(null)
@@ -202,7 +222,7 @@ function App() {
   useEffect(() => {
     if (!token) return undefined
     const interval = setInterval(() => {
-      if (view === 'dashboard') {
+      if (view === 'dashboard' && document.visibilityState === 'visible') {
         loadTargets()
       }
     }, POLL_INTERVAL)
@@ -244,6 +264,27 @@ function App() {
     setSelectedId(id)
     setView('details')
   }
+
+  const prefetchTarget = useCallback(
+    (targetId) => {
+      queryClient.prefetchQuery({
+        queryKey: ['logs', targetId],
+        queryFn: () => apiCall(`/targets/${targetId}/logs?limit=${50}`),
+        staleTime: 5_000,
+      })
+      queryClient.prefetchQuery({
+        queryKey: ['insights', targetId, 'window-60'],
+        queryFn: () => {
+          const params = new URLSearchParams()
+          params.set('window_minutes', '60')
+          params.set('bucket_seconds', String(bucketSecondsForWindow(60)))
+          return apiCall(`/targets/${targetId}/insights?${params.toString()}`)
+        },
+        staleTime: 10_000,
+      })
+    },
+    [apiCall, queryClient],
+  )
 
   const handleTargetUpdated = useCallback((updatedTarget) => {
     setTargets((prev) => prev.map((target) => (target.id === updatedTarget.id ? updatedTarget : target)))
@@ -492,7 +533,12 @@ function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {targets.length === 0 && (
+                    {targets.length === 0 && !targetsLoaded && (
+                      <>
+                        {Array.from({ length: 3 }).map((_, i) => <SkeletonTargetRow key={i} />)}
+                      </>
+                    )}
+                    {targets.length === 0 && targetsLoaded && (
                       <tr>
                         <td colSpan={5} className="p-12 text-center">
                           <div className="flex flex-col items-center text-slate-500 gap-3">
@@ -509,6 +555,7 @@ function App() {
                           key={target.id}
                           className={`hover:bg-slate-50 cursor-pointer border-l-4 transition-colors ${target.is_active ? 'border-l-emerald-500' : 'border-l-transparent'}`}
                           onClick={() => handleSelectTarget(target.id)}
+                          onMouseEnter={() => prefetchTarget(target.id)}
                         >
                           <td className="px-6 py-4">
                             {target.is_active ? (
